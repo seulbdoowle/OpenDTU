@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/*
+ * Copyright (C) 2022 Thomas Basler and others
+ */
 #include "HM_Abstract.h"
 #include "HoymilesRadio.h"
 #include "commands/ActivePowerControlCommand.h"
@@ -13,6 +17,10 @@ HM_Abstract::HM_Abstract(uint64_t serial)
 
 bool HM_Abstract::sendStatsRequest(HoymilesRadio* radio)
 {
+    if (!getEnablePolling()) {
+        return false;
+    }
+
     struct tm timeinfo;
     if (!getLocalTime(&timeinfo, 5)) {
         return false;
@@ -30,20 +38,24 @@ bool HM_Abstract::sendStatsRequest(HoymilesRadio* radio)
 
 bool HM_Abstract::sendAlarmLogRequest(HoymilesRadio* radio, bool force)
 {
+    if (!getEnablePolling()) {
+        return false;
+    }
+
     struct tm timeinfo;
     if (!getLocalTime(&timeinfo, 5)) {
         return false;
     }
 
     if (!force) {
-        if (Statistics()->hasChannelFieldValue(CH0, FLD_EVT_LOG)) {
-            if ((uint8_t)Statistics()->getChannelFieldValue(CH0, FLD_EVT_LOG) == _lastAlarmLogCnt) {
+        if (Statistics()->hasChannelFieldValue(TYPE_INV, CH0, FLD_EVT_LOG)) {
+            if ((uint8_t)Statistics()->getChannelFieldValue(TYPE_INV, CH0, FLD_EVT_LOG) == _lastAlarmLogCnt) {
                 return false;
             }
         }
     }
 
-    _lastAlarmLogCnt = (uint8_t)Statistics()->getChannelFieldValue(CH0, FLD_EVT_LOG);
+    _lastAlarmLogCnt = (uint8_t)Statistics()->getChannelFieldValue(TYPE_INV, CH0, FLD_EVT_LOG);
 
     time_t now;
     time(&now);
@@ -58,6 +70,10 @@ bool HM_Abstract::sendAlarmLogRequest(HoymilesRadio* radio, bool force)
 
 bool HM_Abstract::sendDevInfoRequest(HoymilesRadio* radio)
 {
+    if (!getEnablePolling()) {
+        return false;
+    }
+
     struct tm timeinfo;
     if (!getLocalTime(&timeinfo, 5)) {
         return false;
@@ -79,6 +95,10 @@ bool HM_Abstract::sendDevInfoRequest(HoymilesRadio* radio)
 
 bool HM_Abstract::sendSystemConfigParaRequest(HoymilesRadio* radio)
 {
+    if (!getEnablePolling()) {
+        return false;
+    }
+
     struct tm timeinfo;
     if (!getLocalTime(&timeinfo, 5)) {
         return false;
@@ -97,6 +117,10 @@ bool HM_Abstract::sendSystemConfigParaRequest(HoymilesRadio* radio)
 
 bool HM_Abstract::sendActivePowerControlRequest(HoymilesRadio* radio, float limit, PowerLimitControlType type)
 {
+    if (!getEnableCommands()) {
+        return false;
+    }
+
     if (type == PowerLimitControlType::RelativNonPersistent || type == PowerLimitControlType::RelativPersistent) {
         limit = min<float>(100, limit);
     }
@@ -119,6 +143,10 @@ bool HM_Abstract::resendActivePowerControlRequest(HoymilesRadio* radio)
 
 bool HM_Abstract::sendPowerControlRequest(HoymilesRadio* radio, bool turnOn)
 {
+    if (!getEnableCommands()) {
+        return false;
+    }
+
     if (turnOn) {
         _powerState = 1;
     } else {
@@ -135,6 +163,10 @@ bool HM_Abstract::sendPowerControlRequest(HoymilesRadio* radio, bool turnOn)
 
 bool HM_Abstract::sendRestartControlRequest(HoymilesRadio* radio)
 {
+    if (!getEnableCommands()) {
+        return false;
+    }
+
     _powerState = 2;
 
     PowerControlCommand* cmd = radio->enqueCommand<PowerControlCommand>();
