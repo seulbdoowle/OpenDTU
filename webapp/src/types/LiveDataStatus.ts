@@ -2,6 +2,7 @@ export interface ValueObject {
     v: number; // value
     u: string; // unit
     d: number; // digits
+    max: number;
 }
 
 export interface InverterStatistics {
@@ -23,7 +24,9 @@ export interface InverterStatistics {
 export interface Inverter {
     serial: number;
     name: string;
+    order: number;
     data_age: number;
+    poll_enabled: boolean;
     reachable: boolean;
     producing: boolean;
     limit_relative: number;

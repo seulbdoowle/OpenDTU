@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * Copyright (C) 2022 Thomas Basler and others
+ * Copyright (C) 2022-2023 Thomas Basler and others
  */
 #include "MessageOutput.h"
 
@@ -8,13 +8,12 @@
 
 MessageOutputClass MessageOutput;
 
-#define MSG_LOCK() xSemaphoreTake(_lock, portMAX_DELAY)
-#define MSG_UNLOCK() xSemaphoreGive(_lock)
-
-MessageOutputClass::MessageOutputClass()
+void MessageOutputClass::init(Scheduler& scheduler)
 {
-    _lock = xSemaphoreCreateMutex();
-    MSG_UNLOCK();
+    scheduler.addTask(_loopTask);
+    _loopTask.setCallback(std::bind(&MessageOutputClass::loop, this));
+    _loopTask.setIterations(TASK_FOREVER);
+    _loopTask.enable();
 }
 
 void MessageOutputClass::register_ws_output(AsyncWebSocket* output)
@@ -25,10 +24,9 @@ void MessageOutputClass::register_ws_output(AsyncWebSocket* output)
 size_t MessageOutputClass::write(uint8_t c)
 {
     if (_buff_pos < BUFFER_SIZE) {
-        MSG_LOCK();
+        std::lock_guard<std::mutex> lock(_msgLock);
         _buffer[_buff_pos] = c;
         _buff_pos++;
-        MSG_UNLOCK();
     } else {
         _forceSend = true;
     }
@@ -36,19 +34,30 @@ size_t MessageOutputClass::write(uint8_t c)
     return Serial.write(c);
 }
 
+size_t MessageOutputClass::write(const uint8_t* buffer, size_t size)
+{
+    std::lock_guard<std::mutex> lock(_msgLock);
+    if (_buff_pos + size < BUFFER_SIZE) {
+        memcpy(&_buffer[_buff_pos], buffer, size);
+        _buff_pos += size;
+    }
+    _forceSend = true;
+
+    return Serial.write(buffer, size);
+}
+
 void MessageOutputClass::loop()
 {
     // Send data via websocket if either time is over or buffer is full
     if (_forceSend || (millis() - _lastSend > 1000)) {
-        MSG_LOCK();
+        std::lock_guard<std::mutex> lock(_msgLock);
         if (_ws && _buff_pos > 0) {
             _ws->textAll(_buffer, _buff_pos);
             _buff_pos = 0;
         }
-        if(_forceSend) {
+        if (_forceSend) {
             _buff_pos = 0;
         }
-        MSG_UNLOCK();
         _forceSend = false;
     }
 }

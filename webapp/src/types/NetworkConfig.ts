@@ -8,4 +8,6 @@ export interface NetworkConfig {
     gateway: string;
     dns1: string;
     dns2: string;
+    aptimeout: number;
+    mdnsenabled: boolean;
 }

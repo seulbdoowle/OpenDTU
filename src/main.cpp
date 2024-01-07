@@ -1,152 +1,157 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * Copyright (C) 2022 Thomas Basler and others
+ * Copyright (C) 2022-2023 Thomas Basler and others
  */
 #include "Configuration.h"
+#include "Datastore.h"
 #include "Display_Graphic.h"
 #include "InverterSettings.h"
+#include "Led_Single.h"
 #include "MessageOutput.h"
 #include "MqttHandleDtu.h"
 #include "MqttHandleHass.h"
 #include "MqttHandleInverter.h"
+#include "MqttHandleInverterTotal.h"
 #include "MqttSettings.h"
 #include "NetworkSettings.h"
 #include "NtpSettings.h"
 #include "PinMapping.h"
+#include "Scheduler.h"
 #include "SunPosition.h"
 #include "Utils.h"
 #include "WebApi.h"
 #include "defaults.h"
 #include <Arduino.h>
 #include <LittleFS.h>
+#include <TaskScheduler.h>
 
 void setup()
 {
     // Initialize serial output
     Serial.begin(SERIAL_BAUDRATE);
+#if ARDUINO_USB_CDC_ON_BOOT
+    Serial.setTxTimeoutMs(0);
+    delay(100);
+#else
     while (!Serial)
         yield();
+#endif
+    MessageOutput.init(scheduler);
     MessageOutput.println();
-    MessageOutput.println(F("Starting OpenDTU"));
+    MessageOutput.println("Starting OpenDTU");
 
     // Initialize file system
-    MessageOutput.print(F("Initialize FS... "));
+    MessageOutput.print("Initialize FS... ");
     if (!LittleFS.begin(false)) { // Do not format if mount failed
-        MessageOutput.print(F("failed... trying to format..."));
+        MessageOutput.print("failed... trying to format...");
         if (!LittleFS.begin(true)) {
             MessageOutput.print("success");
         } else {
             MessageOutput.print("failed");
         }
     } else {
-        MessageOutput.println(F("done"));
+        MessageOutput.println("done");
     }
 
     // Read configuration values
-    MessageOutput.print(F("Reading configuration... "));
+    MessageOutput.print("Reading configuration... ");
     if (!Configuration.read()) {
-        MessageOutput.print(F("initializing... "));
+        MessageOutput.print("initializing... ");
         Configuration.init();
         if (Configuration.write()) {
-            MessageOutput.print(F("written... "));
+            MessageOutput.print("written... ");
         } else {
-            MessageOutput.print(F("failed... "));
+            MessageOutput.print("failed... ");
         }
     }
-    if (Configuration.get().Cfg_Version != CONFIG_VERSION) {
-        MessageOutput.print(F("migrated... "));
+    if (Configuration.get().Cfg.Version != CONFIG_VERSION) {
+        MessageOutput.print("migrated... ");
         Configuration.migrate();
     }
-    CONFIG_T& config = Configuration.get();
-    MessageOutput.println(F("done"));
+    auto& config = Configuration.get();
+    MessageOutput.println("done");
 
     // Load PinMapping
-    MessageOutput.print(F("Reading PinMapping... "));
+    MessageOutput.print("Reading PinMapping... ");
     if (PinMapping.init(String(Configuration.get().Dev_PinMapping))) {
-        MessageOutput.print(F("found valid mapping "));
+        MessageOutput.print("found valid mapping ");
     } else {
-        MessageOutput.print(F("using default config "));
+        MessageOutput.print("using default config ");
     }
-    const PinMapping_t& pin = PinMapping.get();
-    MessageOutput.println(F("done"));
+    const auto& pin = PinMapping.get();
+    MessageOutput.println("done");
 
     // Initialize WiFi
-    MessageOutput.print(F("Initialize Network... "));
-    NetworkSettings.init();
-    MessageOutput.println(F("done"));
+    MessageOutput.print("Initialize Network... ");
+    NetworkSettings.init(scheduler);
+    MessageOutput.println("done");
     NetworkSettings.applyConfig();
 
     // Initialize NTP
-    MessageOutput.print(F("Initialize NTP... "));
+    MessageOutput.print("Initialize NTP... ");
     NtpSettings.init();
-    MessageOutput.println(F("done"));
+    MessageOutput.println("done");
 
     // Initialize SunPosition
-    MessageOutput.print(F("Initialize SunPosition... "));
-    SunPosition.init();
-    MessageOutput.println(F("done"));
+    MessageOutput.print("Initialize SunPosition... ");
+    SunPosition.init(scheduler);
+    MessageOutput.println("done");
 
     // Initialize MqTT
-    MessageOutput.print(F("Initialize MqTT... "));
+    MessageOutput.print("Initialize MqTT... ");
     MqttSettings.init();
-    MqttHandleDtu.init();
-    MqttHandleInverter.init();
-    MqttHandleHass.init();
-    MessageOutput.println(F("done"));
+    MqttHandleDtu.init(scheduler);
+    MqttHandleInverter.init(scheduler);
+    MqttHandleInverterTotal.init(scheduler);
+    MqttHandleHass.init(scheduler);
+    MessageOutput.println("done");
 
     // Initialize WebApi
-    MessageOutput.print(F("Initialize WebApi... "));
-    WebApi.init();
-    MessageOutput.println(F("done"));
+    MessageOutput.print("Initialize WebApi... ");
+    WebApi.init(scheduler);
+    MessageOutput.println("done");
 
     // Initialize Display
-    MessageOutput.print(F("Initialize Display... "));
+    MessageOutput.print("Initialize Display... ");
     Display.init(
+        scheduler,
         static_cast<DisplayType_t>(pin.display_type),
         pin.display_data,
         pin.display_clk,
         pin.display_cs,
         pin.display_reset);
-    Display.showLogo = config.Display_ShowLogo;
-    Display.enablePowerSafe = config.Display_PowerSafe;
-    Display.enableScreensaver = config.Display_ScreenSaver;
-    Display.contrast = config.Display_Contrast;
-    MessageOutput.println(F("done"));
+    Display.setOrientation(config.Display.Rotation);
+    Display.enablePowerSafe = config.Display.PowerSafe;
+    Display.enableScreensaver = config.Display.ScreenSaver;
+    Display.setContrast(config.Display.Contrast);
+    Display.setLanguage(config.Display.Language);
+    Display.setStartupDisplay();
+    MessageOutput.println("done");
+
+    // Initialize Single LEDs
+    MessageOutput.print("Initialize LEDs... ");
+    LedSingle.init(scheduler);
+    MessageOutput.println("done");
 
     // Check for default DTU serial
-    MessageOutput.print(F("Check for default DTU serial... "));
-    if (config.Dtu_Serial == DTU_SERIAL) {
-        MessageOutput.print(F("generate serial based on ESP chip id: "));
-        uint64_t dtuId = Utils::generateDtuSerial();
+    MessageOutput.print("Check for default DTU serial... ");
+    if (config.Dtu.Serial == DTU_SERIAL) {
+        MessageOutput.print("generate serial based on ESP chip id: ");
+        const uint64_t dtuId = Utils::generateDtuSerial();
         MessageOutput.printf("%0x%08x... ",
             ((uint32_t)((dtuId >> 32) & 0xFFFFFFFF)),
             ((uint32_t)(dtuId & 0xFFFFFFFF)));
-        config.Dtu_Serial = dtuId;
+        config.Dtu.Serial = dtuId;
         Configuration.write();
     }
-    MessageOutput.println(F("done"));
+    MessageOutput.println("done");
 
-    InverterSettings.init();
+    InverterSettings.init(scheduler);
+
+    Datastore.init(scheduler);
 }
 
 void loop()
 {
-    NetworkSettings.loop();
-    yield();
-    InverterSettings.loop();
-    yield();
-    MqttHandleDtu.loop();
-    yield();
-    MqttHandleInverter.loop();
-    yield();
-    MqttHandleHass.loop();
-    yield();
-    WebApi.loop();
-    yield();
-    Display.loop();
-    yield();
-    SunPosition.loop();
-    yield();
-    MessageOutput.loop();
-    yield();
+    scheduler.execute();
 }

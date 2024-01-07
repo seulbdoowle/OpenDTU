@@ -1,5 +1,5 @@
 <template>
-    <BasePage :title="$t('ntpinfo.NtpInformation')" :isLoading="dataLoading">
+    <BasePage :title="$t('ntpinfo.NtpInformation')" :isLoading="dataLoading" :show-reload="true" @reload="getNtpInfo">
         <CardElement :text="$t('ntpinfo.ConfigurationSummary')" textVariant="text-bg-primary">
             <div class="table-responsive">
                 <table class="table table-hover table-condensed">
@@ -38,11 +38,13 @@
 
                         <tr>
                             <th>{{ $t('ntpinfo.Sunrise') }}</th>
-                            <td>{{ ntpDataList.sun_risetime }}</td>
+                            <td v-if="ntpDataList.sun_isSunsetAvailable">{{ ntpDataList.sun_risetime }}</td>
+                            <td v-else>{{ $t('ntpinfo.NotAvailable') }}</td>
                         </tr>
                         <tr>
                             <th>{{ $t('ntpinfo.Sunset') }}</th>
-                            <td>{{ ntpDataList.sun_settime }}</td>
+                            <td v-if="ntpDataList.sun_isSunsetAvailable">{{ ntpDataList.sun_settime }}</td>
+                            <td v-else>{{ $t('ntpinfo.NotAvailable') }}</td>
                         </tr>
                         <tr>
                             <th>{{ $t('ntpinfo.Mode') }}</th>

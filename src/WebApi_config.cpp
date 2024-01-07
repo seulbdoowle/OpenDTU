@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * Copyright (C) 2022 Thomas Basler and others
+ * Copyright (C) 2022-2023 Thomas Basler and others
  */
 #include "WebApi_config.h"
 #include "Configuration.h"
+#include "Utils.h"
 #include "WebApi.h"
 #include "WebApi_errors.h"
 #include <AsyncJson.h>
 #include <LittleFS.h>
 
-void WebApiConfigClass::init(AsyncWebServer* server)
+void WebApiConfigClass::init(AsyncWebServer& server)
 {
     using std::placeholders::_1;
     using std::placeholders::_2;
@@ -18,7 +19,7 @@ void WebApiConfigClass::init(AsyncWebServer* server)
     using std::placeholders::_5;
     using std::placeholders::_6;
 
-    _server = server;
+    _server = &server;
 
     _server->on("/api/config/get", HTTP_GET, std::bind(&WebApiConfigClass::onConfigGet, this, _1));
     _server->on("/api/config/delete", HTTP_POST, std::bind(&WebApiConfigClass::onConfigDelete, this, _1));
@@ -58,63 +59,63 @@ void WebApiConfigClass::onConfigDelete(AsyncWebServerRequest* request)
     }
 
     AsyncJsonResponse* response = new AsyncJsonResponse();
-    JsonObject retMsg = response->getRoot();
-    retMsg[F("type")] = F("warning");
+    auto& retMsg = response->getRoot();
+    retMsg["type"] = "warning";
 
     if (!request->hasParam("data", true)) {
-        retMsg[F("message")] = F("No values found!");
-        retMsg[F("code")] = WebApiError::GenericNoValueFound;
+        retMsg["message"] = "No values found!";
+        retMsg["code"] = WebApiError::GenericNoValueFound;
         response->setLength();
         request->send(response);
         return;
     }
 
-    String json = request->getParam("data", true)->value();
+    const String json = request->getParam("data", true)->value();
 
     if (json.length() > 1024) {
-        retMsg[F("message")] = F("Data too large!");
-        retMsg[F("code")] = WebApiError::GenericDataTooLarge;
+        retMsg["message"] = "Data too large!";
+        retMsg["code"] = WebApiError::GenericDataTooLarge;
         response->setLength();
         request->send(response);
         return;
     }
 
     DynamicJsonDocument root(1024);
-    DeserializationError error = deserializeJson(root, json);
+    const DeserializationError error = deserializeJson(root, json);
 
     if (error) {
-        retMsg[F("message")] = F("Failed to parse data!");
-        retMsg[F("code")] = WebApiError::GenericDataTooLarge;
+        retMsg["message"] = "Failed to parse data!";
+        retMsg["code"] = WebApiError::GenericDataTooLarge;
         response->setLength();
         request->send(response);
         return;
     }
 
     if (!(root.containsKey("delete"))) {
-        retMsg[F("message")] = F("Values are missing!");
-        retMsg[F("code")] = WebApiError::GenericValueMissing;
+        retMsg["message"] = "Values are missing!";
+        retMsg["code"] = WebApiError::GenericValueMissing;
         response->setLength();
         request->send(response);
         return;
     }
 
-    if (root[F("delete")].as<bool>() == false) {
-        retMsg[F("message")] = F("Not deleted anything!");
-        retMsg[F("code")] = WebApiError::ConfigNotDeleted;
+    if (root["delete"].as<bool>() == false) {
+        retMsg["message"] = "Not deleted anything!";
+        retMsg["code"] = WebApiError::ConfigNotDeleted;
         response->setLength();
         request->send(response);
         return;
     }
 
-    retMsg[F("type")] = F("success");
-    retMsg[F("message")] = F("Configuration resettet. Rebooting now...");
-    retMsg[F("code")] = WebApiError::ConfigSuccess;
+    retMsg["type"] = "success";
+    retMsg["message"] = "Configuration resettet. Rebooting now...";
+    retMsg["code"] = WebApiError::ConfigSuccess;
 
     response->setLength();
     request->send(response);
 
     LittleFS.remove(CONFIG_FILENAME);
-    ESP.restart();
+    Utils::restartDtu();
 }
 
 void WebApiConfigClass::onConfigListGet(AsyncWebServerRequest* request)
@@ -124,8 +125,8 @@ void WebApiConfigClass::onConfigListGet(AsyncWebServerRequest* request)
     }
 
     AsyncJsonResponse* response = new AsyncJsonResponse();
-    JsonObject root = response->getRoot();
-    JsonArray data = root.createNestedArray(F("configs"));
+    auto& root = response->getRoot();
+    auto data = root.createNestedArray("configs");
 
     File rootfs = LittleFS.open("/");
     File file = rootfs.openNextFile();
@@ -157,10 +158,7 @@ void WebApiConfigClass::onConfigUploadFinish(AsyncWebServerRequest* request)
     response->addHeader("Connection", "close");
     response->addHeader("Access-Control-Allow-Origin", "*");
     request->send(response);
-    yield();
-    delay(1000);
-    yield();
-    ESP.restart();
+    Utils::restartDtu();
 }
 
 void WebApiConfigClass::onConfigUpload(AsyncWebServerRequest* request, String filename, size_t index, uint8_t* data, size_t len, bool final)
@@ -175,7 +173,7 @@ void WebApiConfigClass::onConfigUpload(AsyncWebServerRequest* request, String fi
             request->send(500);
             return;
         }
-        String name = "/" + request->getParam("file")->value();
+        const String name = "/" + request->getParam("file")->value();
         request->_tempFile = LittleFS.open(name, "w");
     }
 

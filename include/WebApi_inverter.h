@@ -5,7 +5,7 @@
 
 class WebApiInverterClass {
 public:
-    void init(AsyncWebServer* server);
+    void init(AsyncWebServer& server);
     void loop();
 
 private:
@@ -13,6 +13,7 @@ private:
     void onInverterAdd(AsyncWebServerRequest* request);
     void onInverterEdit(AsyncWebServerRequest* request);
     void onInverterDelete(AsyncWebServerRequest* request);
+    void onInverterOrder(AsyncWebServerRequest* request);
 
     AsyncWebServer* _server;
 };

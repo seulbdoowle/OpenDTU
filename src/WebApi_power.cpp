@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * Copyright (C) 2022 Thomas Basler and others
+ * Copyright (C) 2022-2023 Thomas Basler and others
  */
 #include "WebApi_power.h"
 #include "WebApi.h"
@@ -8,11 +8,11 @@
 #include <AsyncJson.h>
 #include <Hoymiles.h>
 
-void WebApiPowerClass::init(AsyncWebServer* server)
+void WebApiPowerClass::init(AsyncWebServer& server)
 {
     using std::placeholders::_1;
 
-    _server = server;
+    _server = &server;
 
     _server->on("/api/power/status", HTTP_GET, std::bind(&WebApiPowerClass::onPowerStatus, this, _1));
     _server->on("/api/power/config", HTTP_POST, std::bind(&WebApiPowerClass::onPowerPost, this, _1));
@@ -29,7 +29,7 @@ void WebApiPowerClass::onPowerStatus(AsyncWebServerRequest* request)
     }
 
     AsyncJsonResponse* response = new AsyncJsonResponse();
-    JsonObject root = response->getRoot();
+    auto& root = response->getRoot();
 
     for (uint8_t i = 0; i < Hoymiles.getNumInverters(); i++) {
         auto inv = Hoymiles.getInverterByPos(i);
@@ -57,77 +57,78 @@ void WebApiPowerClass::onPowerPost(AsyncWebServerRequest* request)
     }
 
     AsyncJsonResponse* response = new AsyncJsonResponse();
-    JsonObject retMsg = response->getRoot();
-    retMsg[F("type")] = F("warning");
+    auto& retMsg = response->getRoot();
+    retMsg["type"] = "warning";
 
     if (!request->hasParam("data", true)) {
-        retMsg[F("message")] = F("No values found!");
-        retMsg[F("code")] = WebApiError::GenericNoValueFound;
+        retMsg["message"] = "No values found!";
+        retMsg["code"] = WebApiError::GenericNoValueFound;
         response->setLength();
         request->send(response);
         return;
     }
 
-    String json = request->getParam("data", true)->value();
+    const String json = request->getParam("data", true)->value();
 
     if (json.length() > 1024) {
-        retMsg[F("message")] = F("Data too large!");
-        retMsg[F("code")] = WebApiError::GenericDataTooLarge;
+        retMsg["message"] = "Data too large!";
+        retMsg["code"] = WebApiError::GenericDataTooLarge;
         response->setLength();
         request->send(response);
         return;
     }
 
     DynamicJsonDocument root(1024);
-    DeserializationError error = deserializeJson(root, json);
+    const DeserializationError error = deserializeJson(root, json);
 
     if (error) {
-        retMsg[F("message")] = F("Failed to parse data!");
-        retMsg[F("code")] = WebApiError::GenericParseError;
+        retMsg["message"] = "Failed to parse data!";
+        retMsg["code"] = WebApiError::GenericParseError;
         response->setLength();
         request->send(response);
         return;
     }
 
     if (!(root.containsKey("serial")
-            && (root.containsKey("power") || root.containsKey("restart")))) {
-        retMsg[F("message")] = F("Values are missing!");
-        retMsg[F("code")] = WebApiError::GenericValueMissing;
+            && (root.containsKey("power")
+                || root.containsKey("restart")))) {
+        retMsg["message"] = "Values are missing!";
+        retMsg["code"] = WebApiError::GenericValueMissing;
         response->setLength();
         request->send(response);
         return;
     }
 
-    if (root[F("serial")].as<uint64_t>() == 0) {
-        retMsg[F("message")] = F("Serial must be a number > 0!");
-        retMsg[F("code")] = WebApiError::PowerSerialZero;
+    if (root["serial"].as<uint64_t>() == 0) {
+        retMsg["message"] = "Serial must be a number > 0!";
+        retMsg["code"] = WebApiError::PowerSerialZero;
         response->setLength();
         request->send(response);
         return;
     }
 
-    uint64_t serial = strtoll(root[F("serial")].as<String>().c_str(), NULL, 16);
+    uint64_t serial = strtoll(root["serial"].as<String>().c_str(), NULL, 16);
     auto inv = Hoymiles.getInverterBySerial(serial);
     if (inv == nullptr) {
-        retMsg[F("message")] = F("Invalid inverter specified!");
-        retMsg[F("code")] = WebApiError::PowerInvalidInverter;
+        retMsg["message"] = "Invalid inverter specified!";
+        retMsg["code"] = WebApiError::PowerInvalidInverter;
         response->setLength();
         request->send(response);
         return;
     }
 
     if (root.containsKey("power")) {
-        uint16_t power = root[F("power")].as<bool>();
-        inv->sendPowerControlRequest(Hoymiles.getRadio(), power);
+        uint16_t power = root["power"].as<bool>();
+        inv->sendPowerControlRequest(power);
     } else {
-        if (root[F("restart")].as<bool>()) {
-            inv->sendRestartControlRequest(Hoymiles.getRadio());
+        if (root["restart"].as<bool>()) {
+            inv->sendRestartControlRequest();
         }
     }
 
-    retMsg[F("type")] = F("success");
-    retMsg[F("message")] = F("Settings saved!");
-    retMsg[F("code")] = WebApiError::GenericSuccess;
+    retMsg["type"] = "success";
+    retMsg["message"] = "Settings saved!";
+    retMsg["code"] = WebApiError::GenericSuccess;
 
     response->setLength();
     request->send(response);

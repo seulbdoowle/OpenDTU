@@ -5,16 +5,17 @@
 
 class HM_Abstract : public InverterAbstract {
 public:
-    explicit HM_Abstract(uint64_t serial);
-    bool sendStatsRequest(HoymilesRadio* radio);
-    bool sendAlarmLogRequest(HoymilesRadio* radio, bool force = false);
-    bool sendDevInfoRequest(HoymilesRadio* radio);
-    bool sendSystemConfigParaRequest(HoymilesRadio* radio);
-    bool sendActivePowerControlRequest(HoymilesRadio* radio, float limit, PowerLimitControlType type);
-    bool resendActivePowerControlRequest(HoymilesRadio* radio);
-    bool sendPowerControlRequest(HoymilesRadio* radio, bool turnOn);
-    bool sendRestartControlRequest(HoymilesRadio* radio);
-    bool resendPowerControlRequest(HoymilesRadio* radio);
+    explicit HM_Abstract(HoymilesRadio* radio, const uint64_t serial);
+    bool sendStatsRequest();
+    bool sendAlarmLogRequest(const bool force = false);
+    bool sendDevInfoRequest();
+    bool sendSystemConfigParaRequest();
+    bool sendActivePowerControlRequest(float limit, const PowerLimitControlType type);
+    bool resendActivePowerControlRequest();
+    bool sendPowerControlRequest(const bool turnOn);
+    bool sendRestartControlRequest();
+    bool resendPowerControlRequest();
+    bool sendGridOnProFileParaRequest();
 
 private:
     uint8_t _lastAlarmLogCnt = 0;

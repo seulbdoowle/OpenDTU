@@ -15,7 +15,7 @@ jobs:
     name: Gather Environments
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Cache pip
         uses: actions/cache@v3
@@ -37,7 +37,7 @@ jobs:
       - name: Get default environments
         id: envs
         run: |
-          echo "environments=$(pio project config --json-output | jq -cr '.[0][1][0][1]')" >> $GITHUB_OUTPUT
+          echo "environments=$(pio project config --json-output | jq -cr '.[1][1][0][1]|split(",")')" >> $GITHUB_OUTPUT
 
     outputs:
       environments: ${{ steps.envs.outputs.environments }}
@@ -50,7 +50,10 @@ jobs:
       matrix:
         environment: ${{ fromJSON(needs.get_default_envs.outputs.environments) }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+
+      - name: Get tags
+        run: git fetch --force --tags origin
 
       - name: Cache pip
         uses: actions/cache@v3
@@ -74,12 +77,12 @@ jobs:
       - name: Install PlatformIO
         run: |
           python -m pip install --upgrade pip
-          pip install --upgrade platformio
+          pip install --upgrade platformio setuptools
 
       - name: Setup Node.js and yarn
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          node-version: "20"
           cache: "yarn"
           cache-dependency-path: "webapp/yarn.lock"
 
@@ -95,27 +98,15 @@ jobs:
       - name: Rename Firmware
         run: mv .pio/build/${{ matrix.environment }}/firmware.bin .pio/build/${{ matrix.environment }}/opendtu-${{ matrix.environment }}.bin
 
-      - name: Copy boot_app0.bin
-        run: cp ~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin .pio/build/${{ matrix.environment }}/boot_app0.bin
+      - name: Rename Factory Firmware
+        run: mv .pio/build/${{ matrix.environment }}/firmware.factory.bin .pio/build/${{ matrix.environment }}/opendtu-${{ matrix.environment }}.factory.bin
 
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: opendtu-${{ matrix.environment }}
           path: |
             .pio/build/${{ matrix.environment }}/opendtu-${{ matrix.environment }}.bin
-            .pio/build/${{ matrix.environment }}/partitions.bin
-            .pio/build/${{ matrix.environment }}/bootloader.bin
-            .pio/build/${{ matrix.environment }}/boot_app0.bin
-
-      - uses: actions/upload-artifact@v3
-        if: startsWith(github.ref, 'refs/tags/')
-        with:
-          name: opendtu-release
-          path: |
-            .pio/build/${{ matrix.environment }}/opendtu-${{ matrix.environment }}.bin
-            .pio/build/${{ matrix.environment }}/partitions.bin
-            .pio/build/${{ matrix.environment }}/bootloader_dio_40m.bin
-            .pio/build/${{ matrix.environment }}/boot_app0.bin
+            .pio/build/${{ matrix.environment }}/opendtu-${{ matrix.environment }}.factory.bin
 
   release:
     name: Create Release
@@ -123,15 +114,35 @@ jobs:
     needs: [get_default_envs, build]
     if: startsWith(github.ref, 'refs/tags/')
     steps:
-      - uses: actions/download-artifact@v3
-        with:
-          name: opendtu-release
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Create draft release
+      - name: Build Changelog
+        id: github_release
+        uses: mikepenz/release-changelog-builder-action@v3
+        with:
+          failOnError: true
+          commitMode: true
+          configuration: ".github/workflows/config/release-notes-config.json"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Move all files to the same location
+        run: |
+          ls -R
+          cd artifacts
+          for i in */; do cp ${i}opendtu-*.bin ./; done
+
+      - name: Create release
         uses: softprops/action-gh-release@v1
         with:
-          draft: True
+          body: ${{steps.github_release.outputs.changelog}}
+          draft: False
           files: |
-            *.bin
+            artifacts/*.zip, artifacts/*.bin
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -50,7 +50,20 @@
                               type="text" maxlength="32"/>
             </CardElement>
 
-            <button type="submit" class="btn btn-primary mb-3">{{ $t('networkadmin.Save') }}</button>
+            <CardElement :text="$t('networkadmin.MdnsSettings')" textVariant="text-bg-primary" add-space>
+                <InputElement :label="$t('networkadmin.EnableMdns')"
+                              v-model="networkConfigList.mdnsenabled"
+                              type="checkbox"/>
+            </CardElement>
+
+            <CardElement :text="$t('networkadmin.AdminAp')" textVariant="text-bg-primary" add-space>
+                <InputElement :label="$t('networkadmin.ApTimeout')"
+                              v-model="networkConfigList.aptimeout"
+                              type="number" min="0" max="99999"
+                              :postfix="$t('networkadmin.Minutes')"
+                              :tooltip="$t('networkadmin.ApTimeoutHint')"/>
+            </CardElement>
+            <FormFooter @reload="getNetworkConfig"/>
         </form>
     </BasePage>
 </template>
@@ -59,8 +72,9 @@
 import BasePage from '@/components/BasePage.vue';
 import BootstrapAlert from "@/components/BootstrapAlert.vue";
 import CardElement from '@/components/CardElement.vue';
+import FormFooter from '@/components/FormFooter.vue';
 import InputElement from '@/components/InputElement.vue';
-import type { NetworkConfig } from "@/types/NetworkkConfig";
+import type { NetworkConfig } from "@/types/NetworkConfig";
 import { authHeader, handleResponse } from '@/utils/authentication';
 import { defineComponent } from 'vue';
 
@@ -69,6 +83,7 @@ export default defineComponent({
         BasePage,
         BootstrapAlert,
         CardElement,
+        FormFooter,
         InputElement,
     },
     data() {

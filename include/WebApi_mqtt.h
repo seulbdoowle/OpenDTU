@@ -3,18 +3,18 @@
 
 #include <ESPAsyncWebServer.h>
 
-#define MQTT_JSON_DOC_SIZE 3072
+#define MQTT_JSON_DOC_SIZE 10240
 
 class WebApiMqttClass {
 public:
-    void init(AsyncWebServer* server);
+    void init(AsyncWebServer& server);
     void loop();
 
 private:
     void onMqttStatus(AsyncWebServerRequest* request);
     void onMqttAdminGet(AsyncWebServerRequest* request);
     void onMqttAdminPost(AsyncWebServerRequest* request);
-    String getRootCaCertInfo(const char* cert);
+    String getTlsCertInfo(const char* cert);
 
     AsyncWebServer* _server;
 };

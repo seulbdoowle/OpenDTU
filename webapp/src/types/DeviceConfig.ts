@@ -1,13 +1,20 @@
 import type { Device } from "./PinMapping";
 
 export interface Display {
-    show_logo: boolean;
+    rotation: number;
     power_safe: boolean;
     screensaver: boolean;
     contrast: number;
+    language: number;
+    diagramduration: number;
+}
+
+export interface Led {
+    brightness: number;
 }
 
 export interface DeviceConfig {
     curPin: Device;
     display: Display;
+    led: Array<Led>;
 }
