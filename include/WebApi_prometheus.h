@@ -3,12 +3,12 @@
 
 #include <ESPAsyncWebServer.h>
 #include <Hoymiles.h>
+#include <TaskSchedulerDeclarations.h>
 #include <map>
 
 class WebApiPrometheusClass {
 public:
-    void init(AsyncWebServer& server);
-    void loop();
+    void init(AsyncWebServer& server, Scheduler& scheduler);
 
 private:
     void onPrometheusMetricsGet(AsyncWebServerRequest* request);
@@ -16,8 +16,6 @@ private:
     void addField(AsyncResponseStream* stream, const String& serial, const uint8_t idx, std::shared_ptr<InverterAbstract> inv, const ChannelType_t type, const ChannelNum_t channel, const FieldId_t fieldId, const char* metricName, const char* channelName = nullptr);
 
     void addPanelInfo(AsyncResponseStream* stream, const String& serial, const uint8_t idx, std::shared_ptr<InverterAbstract> inv, const ChannelType_t type, const ChannelNum_t channel);
-
-    AsyncWebServer* _server;
 
     enum MetricType_t {
         NONE = 0,
@@ -31,8 +29,9 @@ private:
         MetricType_t type;
     };
 
-    const publish_type_t _publishFields[14] = {
+    const publish_type_t _publishFields[16] = {
         { FLD_PAC, MetricType_t::GAUGE },
+        { FLD_MPAC, MetricType_t::GAUGE },
         { FLD_UAC, MetricType_t::GAUGE },
         { FLD_IAC, MetricType_t::GAUGE },
         { FLD_PDC, MetricType_t::GAUGE },
@@ -42,6 +41,7 @@ private:
         { FLD_YT, MetricType_t::COUNTER },
         { FLD_F, MetricType_t::GAUGE },
         { FLD_T, MetricType_t::GAUGE },
+        { FLD_MT, MetricType_t::GAUGE },
         { FLD_PF, MetricType_t::GAUGE },
         { FLD_Q, MetricType_t::GAUGE },
         { FLD_EFF, MetricType_t::GAUGE },

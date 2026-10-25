@@ -1,27 +1,28 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * Copyright (C) 2022 Thomas Basler and others
+ * Copyright (C) 2022-2026 Thomas Basler and others
  */
 #include "InverterAbstract.h"
-#include "../Hoymiles.h"
 #include "crc.h"
+#include <HoymilesUtils.h>
 #include <cstring>
+#include <esp_log.h>
+
+#undef TAG
+static const char* TAG = "hoymiles";
 
 InverterAbstract::InverterAbstract(HoymilesRadio* radio, const uint64_t serial)
 {
     _serial.u64 = serial;
     _radio = radio;
 
-    char serial_buff[sizeof(uint64_t) * 8 + 1];
-    snprintf(serial_buff, sizeof(serial_buff), "%0x%08x",
-        ((uint32_t)((serial >> 32) & 0xFFFFFFFF)),
-        ((uint32_t)(serial & 0xFFFFFFFF)));
-    _serialString = serial_buff;
+    _serialString = HoymilesUtils::formatSerial(serial);
 
     _alarmLogParser.reset(new AlarmLogParser());
     _devInfoParser.reset(new DevInfoParser());
     _gridProfileParser.reset(new GridProfileParser());
     _powerCommandParser.reset(new PowerCommandParser());
+    _rfInfoParser.reset(new RfInfoParser());
     _statisticsParser.reset(new StatisticsParser());
     _systemConfigParaParser.reset(new SystemConfigParaParser());
 }
@@ -127,6 +128,21 @@ bool InverterAbstract::getZeroYieldDayOnMidnight() const
     return _zeroYieldDayOnMidnight;
 }
 
+void InverterAbstract::setClearEventlogOnMidnight(const bool enabled)
+{
+    _clearEventlogOnMidnight = enabled;
+}
+
+bool InverterAbstract::getClearEventlogOnMidnight() const
+{
+    return _clearEventlogOnMidnight;
+}
+
+int8_t InverterAbstract::getLastRssi() const
+{
+    return _lastRssi;
+}
+
 bool InverterAbstract::sendChangeChannelRequest()
 {
     return false;
@@ -157,6 +173,11 @@ PowerCommandParser* InverterAbstract::PowerCommand()
     return _powerCommandParser.get();
 }
 
+RfInfoParser* InverterAbstract::RfInfo()
+{
+    return _rfInfoParser.get();
+}
+
 StatisticsParser* InverterAbstract::Statistics()
 {
     return _statisticsParser.get();
@@ -175,15 +196,17 @@ void InverterAbstract::clearRxFragmentBuffer()
     _rxFragmentRetransmitCnt = 0;
 }
 
-void InverterAbstract::addRxFragment(const uint8_t fragment[], const uint8_t len)
+void InverterAbstract::addRxFragment(const uint8_t fragment[], const uint8_t len, const int8_t rssi)
 {
+    _lastRssi = rssi;
+
     if (len < 11) {
-        Hoymiles.getMessageOutput()->printf("FATAL: (%s, %d) fragment too short\r\n", __FILE__, __LINE__);
+        ESP_LOGE(TAG, "(%s, %d) fragment too short", __FILE__, __LINE__);
         return;
     }
 
     if (len - 11 > MAX_RF_PAYLOAD_SIZE) {
-        Hoymiles.getMessageOutput()->printf("FATAL: (%s, %d) fragment too large\r\n", __FILE__, __LINE__);
+        ESP_LOGE(TAG, "FATAL: (%s, %d) fragment too large", __FILE__, __LINE__);
         return;
     }
 
@@ -193,12 +216,12 @@ void InverterAbstract::addRxFragment(const uint8_t fragment[], const uint8_t len
     const uint8_t fragmentId = fragmentCount & 0b01111111; // fragmentId is 1 based
 
     if (fragmentId == 0) {
-        Hoymiles.getMessageOutput()->println("ERROR: fragment id zero received and ignored");
+        ESP_LOGE(TAG, "Fragment id zero received and ignored");
         return;
     }
 
     if (fragmentId >= MAX_RF_FRAGMENT_COUNT) {
-        Hoymiles.getMessageOutput()->printf("ERROR: fragment id %d is too large for buffer and ignored\r\n", fragmentId);
+        ESP_LOGE(TAG, "Fragment id %" PRIu8 " is too large for buffer and ignored", fragmentId);
         return;
     }
 
@@ -222,22 +245,33 @@ uint8_t InverterAbstract::verifyAllFragments(CommandAbstract& cmd)
 {
     // All missing
     if (_rxFragmentLastPacketId == 0) {
-        Hoymiles.getMessageOutput()->println("All missing");
+        ESP_LOGW(TAG, "All missing");
         if (cmd.getSendCount() <= cmd.getMaxResendCount()) {
             return FRAGMENT_ALL_MISSING_RESEND;
         } else {
-            cmd.gotTimeout(*this);
+            cmd.gotTimeout();
             return FRAGMENT_ALL_MISSING_TIMEOUT;
         }
     }
 
+    if (cmd.acceptsSingleFragmentAnswer()) {
+        // The command doesn't rely on the 0x80 flag or gapless fragment
+        // numbering. Whatever was received last is treated as complete.
+        if (!cmd.handleResponse(_rxFragmentBuffer, _rxFragmentLastPacketId)) {
+            cmd.gotTimeout();
+            return FRAGMENT_HANDLE_ERROR;
+        }
+
+        return FRAGMENT_OK;
+    }
+
     // Last fragment is missing (the one with 0x80)
     if (_rxFragmentMaxPacketId == 0) {
-        Hoymiles.getMessageOutput()->println("Last missing");
+        ESP_LOGW(TAG, "Last missing");
         if (_rxFragmentRetransmitCnt++ < cmd.getMaxRetransmitCount()) {
             return _rxFragmentLastPacketId + 1;
         } else {
-            cmd.gotTimeout(*this);
+            cmd.gotTimeout();
             return FRAGMENT_RETRANSMIT_TIMEOUT;
         }
     }
@@ -245,20 +279,60 @@ uint8_t InverterAbstract::verifyAllFragments(CommandAbstract& cmd)
     // Middle fragment is missing
     for (uint8_t i = 0; i < _rxFragmentMaxPacketId - 1; i++) {
         if (!_rxFragmentBuffer[i].wasReceived) {
-            Hoymiles.getMessageOutput()->println("Middle missing");
+            ESP_LOGW(TAG, "Middle missing");
             if (_rxFragmentRetransmitCnt++ < cmd.getMaxRetransmitCount()) {
                 return i + 1;
             } else {
-                cmd.gotTimeout(*this);
+                cmd.gotTimeout();
                 return FRAGMENT_RETRANSMIT_TIMEOUT;
             }
         }
     }
 
-    if (!cmd.handleResponse(*this, _rxFragmentBuffer, _rxFragmentMaxPacketId)) {
-        cmd.gotTimeout(*this);
+    if (!cmd.handleResponse(_rxFragmentBuffer, _rxFragmentMaxPacketId)) {
+        cmd.gotTimeout();
         return FRAGMENT_HANDLE_ERROR;
     }
 
     return FRAGMENT_OK;
+}
+
+void InverterAbstract::performDailyTask()
+{
+    // Have to reset the offets first, otherwise it will
+    // Substract the offset from zero which leads to a high value
+    Statistics()->resetYieldDayCorrection();
+    Statistics()->zeroDailyRuntimeData();
+    if (getZeroYieldDayOnMidnight()) {
+        Statistics()->zeroDailyYieldData();
+    }
+    if (getClearEventlogOnMidnight()) {
+        EventLog()->clearBuffer();
+    }
+    resetRadioStats();
+}
+
+bool InverterAbstract::isTransactionComplete() const
+{
+    // The inverter marks the last fragment of a response with the 0x80 bit
+    // (stored in _rxFragmentMaxPacketId by addRxFragment()). Once this flag
+    // was seen and every fragment up to it has been received, the
+    // transaction is complete for sure and waiting for the rx timeout is
+    // pure latency.
+    if (_rxFragmentMaxPacketId == 0) {
+        return false;
+    }
+
+    for (uint8_t i = 0; i < _rxFragmentMaxPacketId; i++) {
+        if (!_rxFragmentBuffer[i].wasReceived) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+void InverterAbstract::resetRadioStats()
+{
+    RadioStats = { };
 }

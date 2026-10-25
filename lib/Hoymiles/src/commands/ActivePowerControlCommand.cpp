@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * Copyright (C) 2022-2023 Thomas Basler and others
+ * Copyright (C) 2022-2026 Thomas Basler and others
  */
 
 /*
@@ -25,8 +25,20 @@ ID   Target Addr   Source Addr   Cmd  SCmd ?    Limit   Type    CRC16   CRC8
 
 #define CRC_SIZE 6
 
-ActivePowerControlCommand::ActivePowerControlCommand(const uint64_t target_address, const uint64_t router_address)
-    : DevControlCommand(target_address, router_address)
+const std::array<const ActivePowerControlValue_t, PowerLimitControlType::PowerLimitControl_Max * 2> ActivePowerControlCommand::_powerLimitControlTypeValues = { {
+    { HmActivePowerControl, AbsolutNonPersistent, 0x0000 },
+    { HmActivePowerControl, RelativNonPersistent, 0x0001 },
+    { HmActivePowerControl, AbsolutPersistent, 0x0100 },
+    { HmActivePowerControl, RelativPersistent, 0x0101 },
+
+    { HmsActivePowerControl, AbsolutNonPersistent, 0x0000 },
+    { HmsActivePowerControl, RelativNonPersistent, 0x0001 },
+    { HmsActivePowerControl, AbsolutPersistent, 0x0002 },
+    { HmsActivePowerControl, RelativPersistent, 0x0003 },
+} };
+
+ActivePowerControlCommand::ActivePowerControlCommand(InverterAbstract* inv, const uint64_t router_address)
+    : DevControlCommand(inv, router_address)
 {
     _payload[10] = 0x0b;
     _payload[11] = 0x00;
@@ -44,7 +56,16 @@ ActivePowerControlCommand::ActivePowerControlCommand(const uint64_t target_addre
 
 String ActivePowerControlCommand::getCommandName() const
 {
-    return "ActivePowerControl";
+    const char* typeName = getDeviceType() == ActivePowerControlDeviceType::HmActivePowerControl ? "HM" : "HMS";
+    char buffer[30];
+    snprintf(buffer, sizeof(buffer), "ActivePowerControl (%s, %02X)", typeName, getType());
+    return buffer;
+}
+
+bool ActivePowerControlCommand::areSameParameter(CommandAbstract* other)
+{
+    return CommandAbstract::areSameParameter(other)
+        && this->getType() == static_cast<ActivePowerControlCommand*>(other)->getType();
 }
 
 void ActivePowerControlCommand::setActivePowerLimit(const float limit, const PowerLimitControlType type)
@@ -53,48 +74,79 @@ void ActivePowerControlCommand::setActivePowerLimit(const float limit, const Pow
 
     // limit
     _payload[12] = (l >> 8) & 0xff;
-    _payload[13] = (l)&0xff;
+    _payload[13] = (l) & 0xff;
 
     // type
-    _payload[14] = (type >> 8) & 0xff;
-    _payload[15] = (type)&0xff;
+    uint32_t type_value = getControlTypeValue(_deviceType, type);
+    _payload[14] = (type_value >> 8) & 0xff;
+    _payload[15] = (type_value) & 0xff;
 
     udpateCRC(CRC_SIZE);
 }
 
-bool ActivePowerControlCommand::handleResponse(InverterAbstract& inverter, const fragment_t fragment[], const uint8_t max_fragment_id)
+bool ActivePowerControlCommand::handleResponse(const fragment_t fragment[], const uint8_t max_fragment_id)
 {
-    if (!DevControlCommand::handleResponse(inverter, fragment, max_fragment_id)) {
+    if (!DevControlCommand::handleResponse(fragment, max_fragment_id)) {
         return false;
     }
 
     if ((getType() == PowerLimitControlType::RelativNonPersistent) || (getType() == PowerLimitControlType::RelativPersistent)) {
-        inverter.SystemConfigPara()->setLimitPercent(getLimit());
+        _inv->SystemConfigPara()->setLimitPercent(getLimit());
     } else {
-        const uint16_t max_power = inverter.DevInfo()->getMaxPower();
+        const uint16_t max_power = _inv->DevInfo()->getMaxPower();
         if (max_power > 0) {
-            inverter.SystemConfigPara()->setLimitPercent(static_cast<float>(getLimit()) / max_power * 100);
+            _inv->SystemConfigPara()->setLimitPercent(static_cast<float>(getLimit()) / max_power * 100);
         } else {
             // TODO(tbnobody): Not implemented yet because we only can publish the percentage value
         }
     }
-    inverter.SystemConfigPara()->setLastUpdateCommand(millis());
-    inverter.SystemConfigPara()->setLastLimitCommandSuccess(CMD_OK);
+    _inv->SystemConfigPara()->setLastUpdateCommand(millis());
+    std::shared_ptr<ActivePowerControlCommand> cmd(std::shared_ptr<ActivePowerControlCommand>(), this);
+    if (_inv->getRadio()->countSimilarCommands(cmd) == 1) {
+        _inv->SystemConfigPara()->setLastLimitCommandSuccess(CMD_OK);
+    }
     return true;
 }
 
 float ActivePowerControlCommand::getLimit() const
 {
-    const uint16_t l = (((uint16_t)_payload[12] << 8) | _payload[13]);
+    const float l = (static_cast<uint16_t>(_payload[12]) << 8) | _payload[13];
     return l / 10;
 }
 
-PowerLimitControlType ActivePowerControlCommand::getType()
+PowerLimitControlType ActivePowerControlCommand::getType() const
 {
-    return (PowerLimitControlType)(((uint16_t)_payload[14] << 8) | _payload[15]);
+    uint32_t type_val = ((static_cast<uint16_t>(_payload[14]) << 8) | _payload[15]);
+    for (uint8_t i = 0; i < PowerLimitControl_Max; i++) {
+        if (type_val ==  getControlTypeValue(_deviceType, static_cast<PowerLimitControlType>(i))) {
+            return static_cast<PowerLimitControlType>(i);
+        }
+    }
+    return PowerLimitControlType::RelativNonPersistent;
 }
 
-void ActivePowerControlCommand::gotTimeout(InverterAbstract& inverter)
+void ActivePowerControlCommand::setDeviceType(ActivePowerControlDeviceType type)
 {
-    inverter.SystemConfigPara()->setLastLimitCommandSuccess(CMD_NOK);
+    _deviceType = type;
+}
+
+ActivePowerControlDeviceType ActivePowerControlCommand::getDeviceType() const
+{
+    return _deviceType;
+}
+
+uint32_t ActivePowerControlCommand::getControlTypeValue(ActivePowerControlDeviceType deviceType, PowerLimitControlType limitType)
+{
+    for (auto& val : _powerLimitControlTypeValues) {
+        if (val.device == deviceType && val.controlType == limitType) {
+            return val.value;
+        }
+    }
+
+    return 0;
+}
+
+void ActivePowerControlCommand::gotTimeout()
+{
+    _inv->SystemConfigPara()->setLastLimitCommandSuccess(CMD_NOK);
 }

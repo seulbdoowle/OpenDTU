@@ -1,12 +1,16 @@
 <template>
-    <CardElement :text="$t('wifistationinfo.WifiStationInfo')" textVariant="text-bg-primary">
+    <CardElement :text="$t('wifistationinfo.WifiStationInfo')" textVariant="text-bg-primary" table>
         <div class="table-responsive">
             <table class="table table-hover table-condensed">
                 <tbody>
                     <tr>
                         <th>{{ $t('wifistationinfo.Status') }}</th>
                         <td>
-                            <StatusBadge :status="networkStatus.sta_status" true_text="wifistationinfo.Enabled" false_text="wifistationinfo.Disabled" />
+                            <StatusBadge
+                                :status="networkStatus.sta_status"
+                                true_text="wifistationinfo.Enabled"
+                                false_text="wifistationinfo.Disabled"
+                            />
                         </td>
                     </tr>
                     <tr>
@@ -40,24 +44,16 @@ import { defineComponent, type PropType } from 'vue';
 export default defineComponent({
     components: {
         CardElement,
-        StatusBadge
+        StatusBadge,
     },
     props: {
         networkStatus: { type: Object as PropType<NetworkStatus>, required: true },
     },
     methods: {
         getRSSIasQuality(rssi: number) {
-            let quality = 0;
-
-            if (rssi <= -100) {
-                quality = 0;
-            } else if (rssi >= -50) {
-                quality = 100;
-            } else {
-                quality = 2 * (rssi + 100);
-            }
-
-            return quality / 100;
+            if (rssi <= -100) return 0;
+            if (rssi >= -50) return 1;
+            return (2 * (rssi + 100)) / 100;
         },
     },
 });

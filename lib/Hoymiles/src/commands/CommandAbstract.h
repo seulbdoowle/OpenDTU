@@ -3,6 +3,7 @@
 
 #include "types.h"
 #include <Stream.h>
+#include <WString.h>
 #include <cstdint>
 
 #define RF_LEN 32
@@ -11,17 +12,28 @@
 
 class InverterAbstract;
 
+enum class QueueInsertType {
+    AllowMultiple,
+    // Remove from  beginning of the queue
+    RemoveOldest,
+
+    // Don't insert command if it already exist
+    RemoveNewest,
+
+    // Replace the existing entry in the queue by the one to be added
+    ReplaceExistent,
+};
+
 class CommandAbstract {
 public:
-    explicit CommandAbstract(const uint64_t target_address = 0, const uint64_t router_address = 0);
-    virtual ~CommandAbstract() {};
+    explicit CommandAbstract(InverterAbstract* inv, const uint64_t router_address = 0);
+    virtual ~CommandAbstract() { };
 
     const uint8_t* getDataPayload();
-    void dumpDataPayload(Print* stream);
+    String dumpDataPayload();
 
     uint8_t getDataSize() const;
 
-    void setTargetAddress(const uint64_t address);
     uint64_t getTargetAddress() const;
 
     void setRouterAddress(const uint64_t address);
@@ -38,8 +50,8 @@ public:
 
     virtual CommandAbstract* getRequestFrameCommand(const uint8_t frame_no);
 
-    virtual bool handleResponse(InverterAbstract& inverter, const fragment_t fragment[], const uint8_t max_fragment_id) = 0;
-    virtual void gotTimeout(InverterAbstract& inverter);
+    virtual bool handleResponse(const fragment_t fragment[], const uint8_t max_fragment_id) = 0;
+    virtual void gotTimeout();
 
     // Sets the amount how often the specific command is resent if all fragments where missing
     virtual uint8_t getMaxResendCount() const;
@@ -47,15 +59,29 @@ public:
     // Sets the amount how often a missing fragment is re-requested if it was not available
     virtual uint8_t getMaxRetransmitCount() const;
 
+    // Returns whether multiple instances of this command are allowed in the command queue.
+    virtual QueueInsertType getQueueInsertType() const { return QueueInsertType::RemoveNewest; }
+    virtual bool areSameParameter(CommandAbstract* other);
+
+    // Some inverters answer certain commands with a single fragment that does
+    // not carry the "last fragment" flag (0x80) which the generic fragment
+    // reassembly otherwise requires. If set, the highest numbered fragment
+    // received so far is accepted as the complete answer.
+    bool acceptsSingleFragmentAnswer() const { return _singleFragmentAnswer; }
+
 protected:
     uint8_t _payload[RF_LEN];
     uint8_t _payload_size;
+    bool _singleFragmentAnswer;
     uint32_t _timeout;
     uint8_t _sendCount;
 
     uint64_t _targetAddress;
     uint64_t _routerAddress;
 
+    InverterAbstract* _inv;
+
 private:
+    void setTargetAddress(const uint64_t address);
     static void convertSerialToPacketId(uint8_t buffer[], const uint64_t serial);
 };

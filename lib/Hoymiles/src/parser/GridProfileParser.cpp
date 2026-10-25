@@ -1,20 +1,40 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * Copyright (C) 2023 Thomas Basler and others
+ * Copyright (C) 2023 - 2026 Thomas Basler and others
  */
+
+/*
+This parser is used to parse the response of 'GridOnProFilePara'.
+It contains the whole grid profile of the inverter.
+
+Data structure:
+
+00   01 02 03 04   05 06 07 08   09   10 11        12 13             14           15                16 17   18 19   20 21   22 23   24 25   26   27 28 29 30 31
+                                      00 01        02 03             04           05                06 07   08 09   10 11   12 13
+                                                                    |<---------- Returns till the end of the payload ---------->|
+---------------------------------------------------------------------------------------------------------------------------------------------------------------
+95   80 14 82 66   80 14 33 28   01   0A 00        20 01             00           0C                08 FC   07 A3   00 0F   09 E2   00 1E   E6   -- -- -- -- --
+^^   ^^^^^^^^^^^   ^^^^^^^^^^^   ^^   ^^^^^        ^^^^^             ^^           ^^                ^^^^^   ^^^^^   ^^^^^   ^^^^^   ^^^^^   ^^
+ID   Source Addr   Target Addr   Idx  Profile ID   Profile Version   Section ID   Section Version   Value   Value   Value   Value   CRC16   CRC8
+
+The number of values depends on the respective section and its version. After the last value of a section follows the next section id.
+*/
 #include "GridProfileParser.h"
-#include "../Hoymiles.h"
 #include <cstring>
+#include <esp_log.h>
 #include <frozen/map.h>
 #include <frozen/string.h>
+
+#undef TAG
+static const char* TAG = "hoymiles";
 
 const std::array<const ProfileType_t, PROFILE_TYPE_COUNT> GridProfileParser::_profileTypes = { {
     { 0x02, 0x00, "US - NA_IEEE1547_240V" },
     { 0x03, 0x00, "DE - DE_VDE4105_2018" },
-    { 0x03, 0x01, "XX - unknown" },
+    { 0x03, 0x01, "DE - DE_VDE4105_2011" },
     { 0x0a, 0x00, "XX - EN 50549-1:2019" },
     { 0x0c, 0x00, "AT - AT_TOR_Erzeuger_default" },
-    { 0x0d, 0x04, "FR -" },
+    { 0x0d, 0x04, "XX - NF_EN_50549-1:2019" },
     { 0x10, 0x00, "ES - ES_RD1699" },
     { 0x12, 0x00, "PL - EU_EN50438" },
     { 0x29, 0x00, "NL - NL_NEN-EN50549-1_2019" },
@@ -82,7 +102,7 @@ constexpr frozen::map<uint8_t, GridProfileItemDefinition_t, 0x42> itemDefinition
     { 0x1f, make_value("Start of Frequency Watt Droop (Fstart)", "Hz", 100) },
     { 0x20, make_value("FW Droop Slope (Kpower_Freq)", "Pn%/Hz", 10) },
     { 0x21, make_value("Recovery Ramp Rate (RRR)", "Pn%/s", 100) },
-    { 0x22, make_value("Recovery High Frequency (RVHF)", "Hz", 100) },
+    { 0x22, make_value("Recovery High Frequency (RVHF)", "Hz", 10) },
     { 0x23, make_value("Recovery Low Frequency (RVLF)", "Hz", 100) },
     { 0x24, make_value("VW Function Activated", "bool", 1) },
     { 0x25, make_value("Start of Voltage Watt Droop (Vstart)", "V", 10) },
@@ -114,7 +134,7 @@ constexpr frozen::map<uint8_t, GridProfileItemDefinition_t, 0x42> itemDefinition
     { 0x3f, make_value("HF2 Maximum Trip time (MTT)", "s", 100) },
     { 0x40, make_value("Short Interruption Reconnect Time (SRT)", "s", 10) },
     { 0x41, make_value("Short Interruption Time (SIT)", "s", 10) },
-    { 0xff, make_value("Unkown Value", "", 1) },
+    { 0xff, make_value("Unknown Value", "", 1) },
 };
 
 const std::array<const GridProfileValue_t, SECTION_VALUE_COUNT> GridProfileParser::_profileValues = { {
@@ -360,7 +380,7 @@ void GridProfileParser::clearBuffer()
 void GridProfileParser::appendFragment(const uint8_t offset, const uint8_t* payload, const uint8_t len)
 {
     if (offset + len > GRID_PROFILE_SIZE) {
-        Hoymiles.getMessageOutput()->printf("FATAL: (%s, %d) grid profile packet too large for buffer\r\n", __FILE__, __LINE__);
+        ESP_LOGE(TAG, "(%s, %d) grid profile packet too large for buffer", __FILE__, __LINE__);
         return;
     }
     memcpy(&_payloadGridProfile[offset], payload, len);
@@ -390,7 +410,7 @@ std::vector<uint8_t> GridProfileParser::getRawData() const
 {
     std::vector<uint8_t> ret;
     HOY_SEMAPHORE_TAKE();
-    for (uint8_t i = 0; i < GRID_PROFILE_SIZE; i++) {
+    for (uint8_t i = 0; i < _gridProfileLength; i++) {
         ret.push_back(_payloadGridProfile[i]);
     }
     HOY_SEMAPHORE_GIVE();
@@ -401,49 +421,62 @@ std::list<GridProfileSection_t> GridProfileParser::getProfile() const
 {
     std::list<GridProfileSection_t> l;
 
-    if (_gridProfileLength > 4) {
-        uint16_t pos = 4;
-        do {
-            const uint8_t section_id = _payloadGridProfile[pos];
-            const uint8_t section_version = _payloadGridProfile[pos + 1];
-            const int16_t section_start = getSectionStart(section_id, section_version);
-            const uint8_t section_size = getSectionSize(section_id, section_version);
+    uint16_t pos = 4;
+    while (pos < _gridProfileLength) {
+        if (_gridProfileLength - pos < 2) {
+            ESP_LOGW(TAG, "grid profile contains an incomplete section header");
+            break;
+        }
+
+        const uint8_t section_id = _payloadGridProfile[pos];
+        const uint8_t section_version = _payloadGridProfile[pos + 1];
+        const int16_t section_start = getSectionStart(section_id, section_version);
+        const uint8_t section_size = getSectionSize(section_id, section_version);
+        pos += 2;
+
+        GridProfileSection_t section;
+        try {
+            section.SectionName = profileSection.at(section_id).data();
+        } catch (const std::out_of_range&) {
+            section.SectionName = "Unknown";
+            break;
+        }
+
+        if (section_start == -1) {
+            section.SectionName = "Unknown";
+            break;
+        }
+
+        if (static_cast<size_t>(section_start) + section_size > _profileValues.size()
+            || static_cast<size_t>(section_size) * 2 > _gridProfileLength - pos) {
+            ESP_LOGW(TAG, "grid profile contains an incomplete section");
+            break;
+        }
+
+        for (uint8_t val_id = 0; val_id < section_size; val_id++) {
+            auto itemDefinition = itemDefinitions.at(_profileValues[section_start + val_id].ItemDefinition);
+
+            float value = static_cast<int16_t>((_payloadGridProfile[pos] << 8) | _payloadGridProfile[pos + 1]);
+            value /= itemDefinition.Divider;
+
+            GridProfileItem_t v;
+            v.Name = itemDefinition.Name.data();
+            v.Unit = itemDefinition.Unit.data();
+            v.Value = value;
+            section.items.push_back(v);
+
             pos += 2;
+        }
 
-            GridProfileSection_t section;
-            try {
-                section.SectionName = profileSection.at(section_id).data();
-            } catch (const std::out_of_range&) {
-                section.SectionName = "Unknown";
-                break;
-            }
-
-            if (section_start == -1) {
-                section.SectionName = "Unknown";
-                break;
-            }
-
-            for (uint8_t val_id = 0; val_id < section_size; val_id++) {
-                auto itemDefinition = itemDefinitions.at(_profileValues[section_start + val_id].ItemDefinition);
-
-                float value = (int16_t)((_payloadGridProfile[pos] << 8) | _payloadGridProfile[pos + 1]);
-                value /= itemDefinition.Divider;
-
-                GridProfileItem_t v;
-                v.Name = itemDefinition.Name.data();
-                v.Unit = itemDefinition.Unit.data();
-                v.Value = value;
-                section.items.push_back(v);
-
-                pos += 2;
-            }
-
-            l.push_back(section);
-
-        } while (pos < _gridProfileLength);
+        l.push_back(section);
     }
 
     return l;
+}
+
+bool GridProfileParser::containsValidData() const
+{
+    return _gridProfileLength > 6;
 }
 
 uint8_t GridProfileParser::getSectionSize(const uint8_t section_id, const uint8_t section_version)

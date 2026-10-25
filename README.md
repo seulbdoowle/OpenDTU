@@ -3,8 +3,9 @@
 [![OpenDTU Build](https://github.com/tbnobody/OpenDTU/actions/workflows/build.yml/badge.svg)](https://github.com/tbnobody/OpenDTU/actions/workflows/build.yml)
 [![cpplint](https://github.com/tbnobody/OpenDTU/actions/workflows/cpplint.yml/badge.svg)](https://github.com/tbnobody/OpenDTU/actions/workflows/cpplint.yml)
 [![Yarn Linting](https://github.com/tbnobody/OpenDTU/actions/workflows/yarnlint.yml/badge.svg)](https://github.com/tbnobody/OpenDTU/actions/workflows/yarnlint.yml)
+[![Yarn Prettier](https://github.com/tbnobody/OpenDTU/actions/workflows/yarnprettier.yml/badge.svg)](https://github.com/tbnobody/OpenDTU/actions/workflows/yarnprettier.yml)
 
-## !! IMPORTANT UPGRADE NOTES !!
+## !!! IMPORTANT UPGRADE NOTES !!!
 
 If you are upgrading from a version before 15.03.2023 you have to upgrade the partition table of the ESP32. Please follow the [this](docs/UpgradePartition.md) documentation!
 
@@ -15,7 +16,7 @@ It was the goal to replace the original Hoymiles DTU (Telemetry Gateway) with th
 
 ## Documentation
 
-The documentation can be found [here](https://tbnobody.github.io/OpenDTU-docs/).
+The documentation can be found [here](https://opendtu.solar/).
 Please feel free to support and create a PR in [this](https://github.com/tbnobody/OpenDTU-docs) repository to make the documentation even better.
 
 ## Breaking changes
@@ -23,6 +24,12 @@ Please feel free to support and create a PR in [this](https://github.com/tbnobod
 Generated using: `git log --date=short --pretty=format:"* %h%x09%ad%x09%s" | grep BREAKING`
 
 ```code
+* 8cab3335      2025-08-07      BREAKING CHANGE: WebAPI endpoint `/api/limit/config` requires different parameters
+* 8372deaf      2025-04-18      BREAKING CHANGE: Logging newline changed from "\r\n" to "\n"
+* 1b637f08      2024-01-30      BREAKING CHANGE: Web API Endpoint /api/livedata/status and /api/prometheus/metrics
+* e1564780      2024-01-30      BREAKING CHANGE: Web API Endpoint /api/livedata/status and /api/prometheus/metrics
+* f0b5542c      2024-01-30      BREAKING CHANGE: Web API Endpoint /api/livedata/status and /api/prometheus/metrics
+* c27ecc36      2024-01-29      BREAKING CHANGE: Web API Endpoint /api/livedata/status
 * 71d1b3b       2023-11-07      BREAKING CHANGE: Home Assistant Auto Discovery to new naming scheme
 * 04f62e0       2023-04-20      BREAKING CHANGE: Web API Endpoint /api/eventlog/status no nested serial object
 * 59f43a8       2023-04-17      BREAKING CHANGE: Web API Endpoint /api/devinfo/status requires GET parameter inv=
@@ -36,69 +43,17 @@ Generated using: `git log --date=short --pretty=format:"* %h%x09%ad%x09%s" | gre
 
 ## Currently supported Inverters
 
-| Model                | Required RF Module | DC Inputs | MPP-Tracker | AC Phases |
-| ---------------------| ------------------ | --------- | ----------- | --------- |
-| Hoymiles HM-300-1T   | NRF24L01+          | 1         | 1           | 1         |
-| Hoymiles HM-350-1T   | NRF24L01+          | 1         | 1           | 1         |
-| Hoymiles HM-400-1T   | NRF24L01+          | 1         | 1           | 1         |
-| Hoymiles HM-600-2T   | NRF24L01+          | 2         | 2           | 1         |
-| Hoymiles HM-700-2T   | NRF24L01+          | 2         | 2           | 1         |
-| Hoymiles HM-800-2T   | NRF24L01+          | 2         | 2           | 1         |
-| Hoymiles HM-1000-4T  | NRF24L01+          | 4         | 2           | 1         |
-| Hoymiles HM-1200-4T  | NRF24L01+          | 4         | 2           | 1         |
-| Hoymiles HM-1500-4T  | NRF24L01+          | 4         | 2           | 1         |
-| Hoymiles HMS-300-1T  | CMT2300A           | 1         | 1           | 1         |
-| Hoymiles HMS-350-1T  | CMT2300A           | 1         | 1           | 1         |
-| Hoymiles HMS-400-1T  | CMT2300A           | 1         | 1           | 1         |
-| Hoymiles HMS-450-1T  | CMT2300A           | 1         | 1           | 1         |
-| Hoymiles HMS-500-1T  | CMT2300A           | 1         | 1           | 1         |
-| Hoymiles HMS-600-2T  | CMT2300A           | 2         | 2           | 1         |
-| Hoymiles HMS-700-2T  | CMT2300A           | 2         | 2           | 1         |
-| Hoymiles HMS-800-2T  | CMT2300A           | 2         | 2           | 1         |
-| Hoymiles HMS-900-2T  | CMT2300A           | 2         | 2           | 1         |
-| Hoymiles HMS-1000-2T | CMT2300A           | 2         | 2           | 1         |
-| Hoymiles HMS-1600-4T | CMT2300A           | 4         | 4           | 1         |
-| Hoymiles HMS-1800-4T | CMT2300A           | 4         | 4           | 1         |
-| Hoymiles HMS-2000-4T | CMT2300A           | 4         | 4           | 1         |
-| Hoymiles HMT-1600-4T | CMT2300A           | 4         | 2           | 3         |
-| Hoymiles HMT-1800-4T | CMT2300A           | 4         | 2           | 3         |
-| Hoymiles HMT-2000-4T | CMT2300A           | 4         | 2           | 3         |
-| Hoymiles HMT-1800-6T | CMT2300A           | 6         | 3           | 3         |
-| Hoymiles HMT-2250-6T | CMT2300A           | 6         | 3           | 3         |
-| Solenso SOL-H350     | NRF24L01+          | 1         | 1           | 1         |
-| Solenso SOL-H400     | NRF24L01+          | 1         | 1           | 1         |
-| Solenso SOL-H800     | NRF24L01+          | 2         | 2           | 1         |
-| TSUN TSOL-M350       | NRF24L01+          | 1         | 1           | 1         |
-| TSUN TSOL-M800       | NRF24L01+          | 2         | 2           | 1         |
-| TSUN TSOL-M1600      | NRF24L01+          | 4         | 2           | 1         |
+A list of all currently supported inverters can be found in the [supported inverter overview](https://www.opendtu.solar/hardware/inverter_overview/).
 
+## LLM/AI Development Policy
 
+LLM output is expressly prohibited for any direct communication, including the following:
 
-## Hardware you need
+- issues or comments
+- feature requests or comments
+- pull request bodies or comments
+- forum/chat/etc. posts or comments
 
-### ESP32 board
+In short, if you are posting **any** of those things, the output must be your own words, explanation, description, etc., not a verbatim dump of an LLM's output. We expect you to understand what you're posting. Violating this rule will result in closure/deletion of the offending item(s).
 
-For ease of use, buy a "ESP32 DEVKIT DOIT" or "ESP32 NodeMCU Development Board" with an ESP32-S3 or ESP-WROOM-32 chipset on it.
-
-Sample Picture:
-
-![NodeMCU-ESP32](docs/nodemcu-esp32.png)
-
-Also supported: Board with Ethernet-Connector and Power-over-Ethernet [Olimex ESP32-POE](https://www.olimex.com/Products/IoT/ESP32/ESP32-POE/open-source-hardware)
-
-### Change pin assignment
-
-Its possible to change all the pins of the NRF24L01+ module, the Display, the LED etc.
-The recommend way to change the pin assignment is by creating a custom [device profile](docs/DeviceProfiles.md).
-It is also possible to create a custom environment and compile the source yourself. This can be achieved by copying one of the [env:....] sections from 'platformio.ini' to 'platformio_override.ini' and editing the 'platformio_override.ini' file and add/change one or more of the following lines to the 'build_flags' parameter:
-
-```makefile
--DHOYMILES_PIN_MISO=19
--DHOYMILES_PIN_MOSI=23
--DHOYMILES_PIN_SCLK=18
--DHOYMILES_PIN_IRQ=16
--DHOYMILES_PIN_CE=4
--DHOYMILES_PIN_CS=5
-```
-
-It is recommended to make all changes only in the  'platformio_override.ini', this is your personal copy.
+An exception will be made for **LLM-assisted translations** if you are having trouble accurately conveying your intent in English. Please explicitly note this ("I have translated this from MyLanguage with an LLM") and, if possible, post in your original language as well.

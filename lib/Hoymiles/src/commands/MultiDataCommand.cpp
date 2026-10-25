@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * Copyright (C) 2022-2023 Thomas Basler and others
+ * Copyright (C) 2022-2026 Thomas Basler and others
  */
 
 /*
@@ -28,8 +28,9 @@ ID   Target Addr   Source Addr   Idx  DT   ?    Time          Gap             Pa
 #include "MultiDataCommand.h"
 #include "crc.h"
 
-MultiDataCommand::MultiDataCommand(const uint64_t target_address, const uint64_t router_address, const uint8_t data_type, const time_t time)
-    : CommandAbstract(target_address, router_address)
+MultiDataCommand::MultiDataCommand(InverterAbstract* inv, const uint64_t router_address, const uint8_t data_type, const time_t time)
+    : CommandAbstract(inv, router_address)
+    , _cmdRequestFrame(inv)
 {
     _payload[0] = 0x15;
     _payload[9] = 0x80;
@@ -62,10 +63,10 @@ uint8_t MultiDataCommand::getDataType() const
 
 void MultiDataCommand::setTime(const time_t time)
 {
-    _payload[12] = (uint8_t)(time >> 24);
-    _payload[13] = (uint8_t)(time >> 16);
-    _payload[14] = (uint8_t)(time >> 8);
-    _payload[15] = (uint8_t)(time);
+    _payload[12] = static_cast<uint8_t>(time >> 24);
+    _payload[13] = static_cast<uint8_t>(time >> 16);
+    _payload[14] = static_cast<uint8_t>(time >> 8);
+    _payload[15] = static_cast<uint8_t>(time);
     udpateCRC();
 }
 
@@ -79,14 +80,17 @@ time_t MultiDataCommand::getTime() const
 
 CommandAbstract* MultiDataCommand::getRequestFrameCommand(const uint8_t frame_no)
 {
-    _cmdRequestFrame.setTargetAddress(getTargetAddress());
     _cmdRequestFrame.setFrameNo(frame_no);
 
     return &_cmdRequestFrame;
 }
 
-bool MultiDataCommand::handleResponse(InverterAbstract& inverter, const fragment_t fragment[], const uint8_t max_fragment_id)
+bool MultiDataCommand::handleResponse(const fragment_t fragment[], const uint8_t max_fragment_id)
 {
+    if (max_fragment_id == 0 || fragment[max_fragment_id - 1].len < 2) {
+        return false;
+    }
+
     // All fragments are available --> Check CRC
     uint16_t crc = 0xffff, crcRcv = 0;
 
@@ -111,9 +115,9 @@ bool MultiDataCommand::handleResponse(InverterAbstract& inverter, const fragment
 
 void MultiDataCommand::udpateCRC()
 {
-    const  uint16_t crc = crc16(&_payload[10], 14); // From data_type till password
-    _payload[24] = (uint8_t)(crc >> 8);
-    _payload[25] = (uint8_t)(crc);
+    const uint16_t crc = crc16(&_payload[10], 14); // From data_type till password
+    _payload[24] = static_cast<uint8_t>(crc >> 8);
+    _payload[25] = static_cast<uint8_t>(crc);
 }
 
 uint8_t MultiDataCommand::getTotalFragmentSize(const fragment_t fragment[], const uint8_t max_fragment_id)

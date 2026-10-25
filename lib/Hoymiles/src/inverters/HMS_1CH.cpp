@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * Copyright (C) 2023 Thomas Basler and others
+ * Copyright (C) 2023-2026 Thomas Basler and others
  */
 #include "HMS_1CH.h"
 
@@ -10,30 +10,34 @@ static const byteAssign_t byteAssignment[] = {
     { TYPE_DC, CH0, FLD_PDC, UNIT_W, 6, 2, 10, false, 1 },
     { TYPE_DC, CH0, FLD_YD, UNIT_WH, 12, 2, 1, false, 0 },
     { TYPE_DC, CH0, FLD_YT, UNIT_KWH, 8, 4, 1000, false, 3 },
-    { TYPE_DC, CH0, FLD_IRR, UNIT_PCT, CALC_IRR_CH, CH0, CMD_CALC, false, 3 },
+    { TYPE_DC, CH0, FLD_IRR, UNIT_PCT, CALC_CH_IRR, CH0, CMD_CALC, false, 3 },
 
     { TYPE_AC, CH0, FLD_UAC, UNIT_V, 14, 2, 10, false, 1 },
     { TYPE_AC, CH0, FLD_IAC, UNIT_A, 22, 2, 100, false, 2 },
     { TYPE_AC, CH0, FLD_PAC, UNIT_W, 18, 2, 10, false, 1 },
-    { TYPE_AC, CH0, FLD_Q, UNIT_VAR, 20, 2, 10, false, 1 },
+    { TYPE_AC, CH0, FLD_Q, UNIT_VAR, 20, 2, 10, true, 1 },
     { TYPE_AC, CH0, FLD_F, UNIT_HZ, 16, 2, 100, false, 2 },
     { TYPE_AC, CH0, FLD_PF, UNIT_NONE, 24, 2, 1000, false, 3 },
 
     { TYPE_INV, CH0, FLD_T, UNIT_C, 26, 2, 10, true, 1 },
     { TYPE_INV, CH0, FLD_EVT_LOG, UNIT_NONE, 28, 2, 1, false, 0 },
 
-    { TYPE_AC, CH0, FLD_YD, UNIT_WH, CALC_YD_CH0, 0, CMD_CALC, false, 0 },
-    { TYPE_AC, CH0, FLD_YT, UNIT_KWH, CALC_YT_CH0, 0, CMD_CALC, false, 3 },
-    { TYPE_AC, CH0, FLD_PDC, UNIT_W, CALC_PDC_CH0, 0, CMD_CALC, false, 1 },
-    { TYPE_AC, CH0, FLD_EFF, UNIT_PCT, CALC_EFF_CH0, 0, CMD_CALC, false, 3 }
+    { TYPE_INV, CH0, FLD_YD, UNIT_WH, CALC_TOTAL_YD, 0, CMD_CALC, false, 0 },
+    { TYPE_INV, CH0, FLD_YT, UNIT_KWH, CALC_TOTAL_YT, 0, CMD_CALC, false, 3 },
+    { TYPE_INV, CH0, FLD_PDC, UNIT_W, CALC_TOTAL_PDC, 0, CMD_CALC, false, 1 },
+    { TYPE_INV, CH0, FLD_EFF, UNIT_PCT, CALC_TOTAL_EFF, 0, CMD_CALC, false, 3 },
+    { TYPE_INV, CH0, FLD_MT, UNIT_C, CALC_MAX_TEMPERATURE, 0, CMD_CALC, true, 1 },
+    { TYPE_AC, CH0, FLD_MPAC, UNIT_W, CALC_MAX_PAC, 0, CMD_CALC, false, 1 },
 };
 
 HMS_1CH::HMS_1CH(HoymilesRadio* radio, const uint64_t serial)
-    : HMS_Abstract(radio, serial) {};
+    : HMS_Abstract(radio, serial)
+{
+}
 
 bool HMS_1CH::isValidSerial(const uint64_t serial)
 {
-    // serial >= 0x112400000000 && serial <= 0x112499999999
+    // serial >= 0x112400000000 && serial <= 0x1124ffffffff
     uint16_t preSerial = (serial >> 32) & 0xffff;
     return preSerial == 0x1124;
 }

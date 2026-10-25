@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * Copyright (C) 2022 Thomas Basler and others
+ * Copyright (C) 2022-2026 Thomas Basler and others
  */
 #include "HM_Abstract.h"
 #include "HoymilesRadio.h"
@@ -11,10 +11,13 @@
 #include "commands/GridOnProFilePara.h"
 #include "commands/PowerControlCommand.h"
 #include "commands/RealTimeRunDataCommand.h"
+#include "commands/RfInfoCommand.h"
 #include "commands/SystemConfigParaCommand.h"
 
 HM_Abstract::HM_Abstract(HoymilesRadio* radio, const uint64_t serial)
-    : InverterAbstract(radio, serial) {};
+    : InverterAbstract(radio, serial)
+{
+}
 
 bool HM_Abstract::sendStatsRequest()
 {
@@ -22,17 +25,11 @@ bool HM_Abstract::sendStatsRequest()
         return false;
     }
 
-    struct tm timeinfo;
-    if (!getLocalTime(&timeinfo, 5)) {
-        return false;
-    }
-
     time_t now;
     time(&now);
 
-    auto cmd = _radio->prepareCommand<RealTimeRunDataCommand>();
+    auto cmd = _radio->prepareCommand<RealTimeRunDataCommand>(this);
     cmd->setTime(now);
-    cmd->setTargetAddress(serial());
     _radio->enqueCommand(cmd);
 
     return true;
@@ -44,27 +41,21 @@ bool HM_Abstract::sendAlarmLogRequest(const bool force)
         return false;
     }
 
-    struct tm timeinfo;
-    if (!getLocalTime(&timeinfo, 5)) {
-        return false;
-    }
-
     if (!force) {
         if (Statistics()->hasChannelFieldValue(TYPE_INV, CH0, FLD_EVT_LOG)) {
-            if ((uint8_t)Statistics()->getChannelFieldValue(TYPE_INV, CH0, FLD_EVT_LOG) == _lastAlarmLogCnt) {
+            if (static_cast<uint8_t>(Statistics()->getChannelFieldValue(TYPE_INV, CH0, FLD_EVT_LOG) == _lastAlarmLogCnt)) {
                 return false;
             }
         }
     }
 
-    _lastAlarmLogCnt = (uint8_t)Statistics()->getChannelFieldValue(TYPE_INV, CH0, FLD_EVT_LOG);
+    _lastAlarmLogCnt = static_cast<uint8_t>(Statistics()->getChannelFieldValue(TYPE_INV, CH0, FLD_EVT_LOG));
 
     time_t now;
     time(&now);
 
-    auto cmd = _radio->prepareCommand<AlarmDataCommand>();
+    auto cmd = _radio->prepareCommand<AlarmDataCommand>(this);
     cmd->setTime(now);
-    cmd->setTargetAddress(serial());
     EventLog()->setLastAlarmRequestSuccess(CMD_PENDING);
     _radio->enqueCommand(cmd);
 
@@ -77,22 +68,15 @@ bool HM_Abstract::sendDevInfoRequest()
         return false;
     }
 
-    struct tm timeinfo;
-    if (!getLocalTime(&timeinfo, 5)) {
-        return false;
-    }
-
     time_t now;
     time(&now);
 
-    auto cmdAll = _radio->prepareCommand<DevInfoAllCommand>();
+    auto cmdAll = _radio->prepareCommand<DevInfoAllCommand>(this);
     cmdAll->setTime(now);
-    cmdAll->setTargetAddress(serial());
     _radio->enqueCommand(cmdAll);
 
-    auto cmdSimple = _radio->prepareCommand<DevInfoSimpleCommand>();
+    auto cmdSimple = _radio->prepareCommand<DevInfoSimpleCommand>(this);
     cmdSimple->setTime(now);
-    cmdSimple->setTargetAddress(serial());
     _radio->enqueCommand(cmdSimple);
 
     return true;
@@ -104,17 +88,11 @@ bool HM_Abstract::sendSystemConfigParaRequest()
         return false;
     }
 
-    struct tm timeinfo;
-    if (!getLocalTime(&timeinfo, 5)) {
-        return false;
-    }
-
     time_t now;
     time(&now);
 
-    auto cmd = _radio->prepareCommand<SystemConfigParaCommand>();
+    auto cmd = _radio->prepareCommand<SystemConfigParaCommand>(this);
     cmd->setTime(now);
-    cmd->setTargetAddress(serial());
     SystemConfigPara()->setLastLimitRequestSuccess(CMD_PENDING);
     _radio->enqueCommand(cmd);
 
@@ -134,9 +112,8 @@ bool HM_Abstract::sendActivePowerControlRequest(float limit, const PowerLimitCon
     _activePowerControlLimit = limit;
     _activePowerControlType = type;
 
-    auto cmd = _radio->prepareCommand<ActivePowerControlCommand>();
+    auto cmd = _radio->prepareCommand<ActivePowerControlCommand>(this);
     cmd->setActivePowerLimit(limit, type);
-    cmd->setTargetAddress(serial());
     SystemConfigPara()->setLastLimitCommandSuccess(CMD_PENDING);
     _radio->enqueCommand(cmd);
 
@@ -160,9 +137,8 @@ bool HM_Abstract::sendPowerControlRequest(const bool turnOn)
         _powerState = 0;
     }
 
-    auto cmd = _radio->prepareCommand<PowerControlCommand>();
+    auto cmd = _radio->prepareCommand<PowerControlCommand>(this);
     cmd->setPowerOn(turnOn);
-    cmd->setTargetAddress(serial());
     PowerCommand()->setLastPowerCommandSuccess(CMD_PENDING);
     _radio->enqueCommand(cmd);
 
@@ -177,9 +153,8 @@ bool HM_Abstract::sendRestartControlRequest()
 
     _powerState = 2;
 
-    auto cmd = _radio->prepareCommand<PowerControlCommand>();
+    auto cmd = _radio->prepareCommand<PowerControlCommand>(this);
     cmd->setRestart();
-    cmd->setTargetAddress(serial());
     PowerCommand()->setLastPowerCommandSuccess(CMD_PENDING);
     _radio->enqueCommand(cmd);
 
@@ -211,18 +186,29 @@ bool HM_Abstract::sendGridOnProFileParaRequest()
         return false;
     }
 
-    struct tm timeinfo;
-    if (!getLocalTime(&timeinfo, 5)) {
-        return false;
-    }
-
     time_t now;
     time(&now);
 
-    auto cmd = _radio->prepareCommand<GridOnProFilePara>();
+    auto cmd = _radio->prepareCommand<GridOnProFilePara>(this);
     cmd->setTime(now);
-    cmd->setTargetAddress(serial());
     _radio->enqueCommand(cmd);
 
     return true;
+}
+
+bool HM_Abstract::sendRfInfoRequest()
+{
+    if (!getEnablePolling()) {
+        return false;
+    }
+
+    auto cmd = _radio->prepareCommand<RfInfoCommand>(this);
+    _radio->enqueCommand(cmd);
+
+    return true;
+}
+
+bool HM_Abstract::supportsPowerDistributionLogic()
+{
+    return false;
 }

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * Copyright (C) 2023 Thomas Basler and others
+ * Copyright (C) 2023-2026 Thomas Basler and others
  */
 #include "Led_Single.h"
 #include "Configuration.h"
@@ -38,6 +38,8 @@ const uint8_t pwmTable[] = {
 #define LED_OFF 0
 
 LedSingleClass::LedSingleClass()
+    : _setTask(LEDSINGLE_UPDATE_INTERVAL * TASK_MILLISECOND, TASK_FOREVER, std::bind(&LedSingleClass::setLoop, this))
+    , _outputTask(TASK_IMMEDIATE, TASK_FOREVER, std::bind(&LedSingleClass::outputLoop, this))
 {
 }
 
@@ -51,7 +53,7 @@ void LedSingleClass::init(Scheduler& scheduler)
     const auto& pin = PinMapping.get();
     for (uint8_t i = 0; i < PINMAPPING_LED_COUNT; i++) {
 
-        if (pin.led[i] >= 0) {
+        if (pin.led[i] > GPIO_NUM_NC) {
             pinMode(pin.led[i], OUTPUT);
             setLed(i, false);
             ledActive = true;
@@ -62,14 +64,9 @@ void LedSingleClass::init(Scheduler& scheduler)
 
     if (ledActive) {
         scheduler.addTask(_outputTask);
-        _outputTask.setCallback(std::bind(&LedSingleClass::outputLoop, this));
-        _outputTask.setIterations(TASK_FOREVER);
         _outputTask.enable();
 
         scheduler.addTask(_setTask);
-        _setTask.setCallback(std::bind(&LedSingleClass::setLoop, this));
-        _setTask.setInterval(LEDSINGLE_UPDATE_INTERVAL * TASK_MILLISECOND);
-        _setTask.setIterations(TASK_FOREVER);
         _setTask.enable();
     }
 }
@@ -134,11 +131,16 @@ void LedSingleClass::setLed(const uint8_t ledNo, const bool ledState)
     const auto& pin = PinMapping.get();
     const auto& config = Configuration.get();
 
-    if (pin.led[ledNo] < 0) {
+    if (pin.led[ledNo] == GPIO_NUM_NC) {
         return;
     }
 
+#if ESP_ARDUINO_VERSION_MAJOR < 3
     const uint32_t currentPWM = ledcRead(analogGetChannel(pin.led[ledNo]));
+#else
+    const uint32_t currentPWM = ledcRead(pin.led[ledNo]);
+#endif
+
     const uint32_t targetPWM = ledState ? pwmTable[config.Led_Single[ledNo].Brightness] : LED_OFF;
 
     if (currentPWM == targetPWM) {

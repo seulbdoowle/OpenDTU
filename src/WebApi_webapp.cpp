@@ -1,100 +1,97 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * Copyright (C) 2022-2023 Thomas Basler and others
+ * Copyright (C) 2022-2026 Thomas Basler and others
  */
 #include "WebApi_webapp.h"
+#include <MD5Builder.h>
+#include <__compiled_constants.h>
 
 extern const uint8_t file_index_html_start[] asm("_binary_webapp_dist_index_html_gz_start");
 extern const uint8_t file_favicon_ico_start[] asm("_binary_webapp_dist_favicon_ico_start");
 extern const uint8_t file_favicon_png_start[] asm("_binary_webapp_dist_favicon_png_start");
-extern const uint8_t file_zones_json_start[] asm("_binary_webapp_dist_zones_json_gz_start");
 extern const uint8_t file_app_js_start[] asm("_binary_webapp_dist_js_app_js_gz_start");
 extern const uint8_t file_site_webmanifest_start[] asm("_binary_webapp_dist_site_webmanifest_start");
 
 extern const uint8_t file_index_html_end[] asm("_binary_webapp_dist_index_html_gz_end");
 extern const uint8_t file_favicon_ico_end[] asm("_binary_webapp_dist_favicon_ico_end");
 extern const uint8_t file_favicon_png_end[] asm("_binary_webapp_dist_favicon_png_end");
-extern const uint8_t file_zones_json_end[] asm("_binary_webapp_dist_zones_json_gz_end");
 extern const uint8_t file_app_js_end[] asm("_binary_webapp_dist_js_app_js_gz_end");
 extern const uint8_t file_site_webmanifest_end[] asm("_binary_webapp_dist_site_webmanifest_end");
 
-#ifdef AUTO_GIT_HASH
-#define ETAG_HTTP_HEADER_VAL "\"" AUTO_GIT_HASH "\"" // ETag value must be between quotes
-#endif
-
-void WebApiWebappClass::init(AsyncWebServer& server)
+void WebApiWebappClass::responseBinaryDataWithETagCache(AsyncWebServerRequest* request, const String& contentType, const String& contentEncoding, const uint8_t* content, size_t len)
 {
-    _server = &server;
+    auto md5 = MD5Builder();
+    md5.begin();
+    md5.add(const_cast<uint8_t*>(content), len);
 
-    _server->on("/", HTTP_GET, [](AsyncWebServerRequest* request) {
-        AsyncWebServerResponse* response = request->beginResponse_P(200, "text/html", file_index_html_start, file_index_html_end - file_index_html_start);
-        response->addHeader("Content-Encoding", "gzip");
-        request->send(response);
-    });
+    // ensure ETag uniqueness per version by including Git commit hash. force
+    // browsers to reload dependent resources like app.js even
+    // when index.html content hasn't actually changed between versions.
+    md5.add(String(__COMPILED_GIT_HASH__));
 
-    _server->onNotFound([](AsyncWebServerRequest* request) {
-        AsyncWebServerResponse* response = request->beginResponse_P(200, "text/html", file_index_html_start, file_index_html_end - file_index_html_start);
-        response->addHeader("Content-Encoding", "gzip");
-        request->send(response);
-    });
+    md5.calculate();
 
-    _server->on("/index.html", HTTP_GET, [](AsyncWebServerRequest* request) {
-        AsyncWebServerResponse* response = request->beginResponse_P(200, "text/html", file_index_html_start, file_index_html_end - file_index_html_start);
-        response->addHeader("Content-Encoding", "gzip");
-        request->send(response);
-    });
+    String expectedEtag;
+    expectedEtag = "\"";
+    expectedEtag += md5.toString();
+    expectedEtag += "\"";
 
-    _server->on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest* request) {
-        AsyncWebServerResponse* response = request->beginResponse_P(200, "image/x-icon", file_favicon_ico_start, file_favicon_ico_end - file_favicon_ico_start);
-        request->send(response);
-    });
+    bool eTagMatch = false;
+    if (request->hasHeader(asyncsrv::T_INM)) {
+        const AsyncWebHeader* h = request->getHeader(asyncsrv::T_INM);
+        eTagMatch = h->value().equals(expectedEtag);
+    }
 
-    _server->on("/favicon.png", HTTP_GET, [](AsyncWebServerRequest* request) {
-        AsyncWebServerResponse* response = request->beginResponse_P(200, "image/png", file_favicon_png_start, file_favicon_png_end - file_favicon_png_start);
-        request->send(response);
-    });
-
-    _server->on("/zones.json", HTTP_GET, [](AsyncWebServerRequest* request) {
-        AsyncWebServerResponse* response = request->beginResponse_P(200, "application/json", file_zones_json_start, file_zones_json_end - file_zones_json_start);
-        response->addHeader("Content-Encoding", "gzip");
-        request->send(response);
-    });
-
-    _server->on("/site.webmanifest", HTTP_GET, [](AsyncWebServerRequest* request) {
-        AsyncWebServerResponse* response = request->beginResponse_P(200, "application/json", file_site_webmanifest_start, file_site_webmanifest_end - file_site_webmanifest_start);
-        request->send(response);
-    });
-
-    _server->on("/js/app.js", HTTP_GET, [](AsyncWebServerRequest* request) {
-#ifdef ETAG_HTTP_HEADER_VAL
-        // check client If-None-Match header vs ETag/AUTO_GIT_HASH
-        bool eTagMatch = false;
-        if (request->hasHeader("If-None-Match")) {
-            const AsyncWebHeader* h = request->getHeader("If-None-Match");
-            if (strncmp(ETAG_HTTP_HEADER_VAL, h->value().c_str(), strlen(ETAG_HTTP_HEADER_VAL)) == 0) {
-                eTagMatch = true;
-            }
+    // begin response 200 or 304
+    AsyncWebServerResponse* response;
+    if (eTagMatch) {
+        response = request->beginResponse(304);
+    } else {
+        response = request->beginResponse(200, contentType, content, len);
+        if (contentEncoding.length() > 0) {
+            response->addHeader(asyncsrv::T_Content_Encoding, contentEncoding);
         }
+    }
 
-        // begin response 200 or 304
-        AsyncWebServerResponse* response;
-        if (eTagMatch) {
-            response = request->beginResponse(304);
-        } else {
-            response = request->beginResponse_P(200, "text/javascript", file_app_js_start, file_app_js_end - file_app_js_start);
-            response->addHeader("Content-Encoding", "gzip");
-        }
-        // HTTP requires cache headers in 200 and 304 to be identical
-        response->addHeader("Cache-Control", "public, must-revalidate");
-        response->addHeader("ETag", ETAG_HTTP_HEADER_VAL);
-#else
-        AsyncWebServerResponse* response = request->beginResponse_P(200, "text/javascript", file_app_js_start, file_app_js_end - file_app_js_start);
-        response->addHeader("Content-Encoding", "gzip");
-#endif
-        request->send(response);
-    });
+    // HTTP requires cache headers in 200 and 304 to be identical
+    response->addHeader(asyncsrv::T_Cache_Control, "public, must-revalidate");
+    response->addHeader(asyncsrv::T_ETag, expectedEtag);
+
+    request->send(response);
 }
 
-void WebApiWebappClass::loop()
+void WebApiWebappClass::init(AsyncWebServer& server, Scheduler& scheduler)
 {
+    /*
+       We don't validate the request header "Accept-Encoding" if gzip compression is supported!
+       We just have the gzipped data available - so we ship them!
+    */
+
+    server.on("/", HTTP_GET, [&](AsyncWebServerRequest* request) {
+        responseBinaryDataWithETagCache(request, asyncsrv::T_text_html, asyncsrv::T_gzip, file_index_html_start, file_index_html_end - file_index_html_start);
+    });
+
+    server.onNotFound([&](AsyncWebServerRequest* request) {
+        responseBinaryDataWithETagCache(request, asyncsrv::T_text_html, asyncsrv::T_gzip, file_index_html_start, file_index_html_end - file_index_html_start);
+    });
+
+    server.on("/index.html", HTTP_GET, [&](AsyncWebServerRequest* request) {
+        responseBinaryDataWithETagCache(request, asyncsrv::T_text_html, asyncsrv::T_gzip, file_index_html_start, file_index_html_end - file_index_html_start);
+    });
+
+    server.on("/favicon.ico", HTTP_GET, [&](AsyncWebServerRequest* request) {
+        responseBinaryDataWithETagCache(request, asyncsrv::T_image_x_icon, "", file_favicon_ico_start, file_favicon_ico_end - file_favicon_ico_start);
+    });
+
+    server.on("/favicon.png", HTTP_GET, [&](AsyncWebServerRequest* request) {
+        responseBinaryDataWithETagCache(request, asyncsrv::T_image_png, "", file_favicon_png_start, file_favicon_png_end - file_favicon_png_start);
+    });
+
+    server.on("/site.webmanifest", HTTP_GET, [&](AsyncWebServerRequest* request) {
+        responseBinaryDataWithETagCache(request, asyncsrv::T_application_json, "", file_site_webmanifest_start, file_site_webmanifest_end - file_site_webmanifest_start);
+    });
+
+    server.on("/js/app.js", HTTP_GET, [&](AsyncWebServerRequest* request) {
+        responseBinaryDataWithETagCache(request, asyncsrv::T_text_javascript, asyncsrv::T_gzip, file_app_js_start, file_app_js_end - file_app_js_start);
+    });
 }

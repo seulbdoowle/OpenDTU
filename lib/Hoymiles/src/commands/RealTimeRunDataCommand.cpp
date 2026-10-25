@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * Copyright (C) 2022-2023 Thomas Basler and others
+ * Copyright (C) 2022-2026 Thomas Basler and others
  */
 
 /*
@@ -19,11 +19,14 @@ Command structure:
 ID   Target Addr   Source Addr   Idx  DT   ?    Time          Gap             Password      CRC16   CRC8
 */
 #include "RealTimeRunDataCommand.h"
-#include "Hoymiles.h"
 #include "inverters/InverterAbstract.h"
+#include <esp_log.h>
 
-RealTimeRunDataCommand::RealTimeRunDataCommand(const uint64_t target_address, const uint64_t router_address, const time_t time)
-    : MultiDataCommand(target_address, router_address)
+#undef TAG
+static const char* TAG = "hoymiles";
+
+RealTimeRunDataCommand::RealTimeRunDataCommand(InverterAbstract* inv, const uint64_t router_address, const time_t time)
+    : MultiDataCommand(inv, router_address)
 {
     setTime(time);
     setDataType(0x0b);
@@ -35,10 +38,10 @@ String RealTimeRunDataCommand::getCommandName() const
     return "RealTimeRunData";
 }
 
-bool RealTimeRunDataCommand::handleResponse(InverterAbstract& inverter, const fragment_t fragment[], const uint8_t max_fragment_id)
+bool RealTimeRunDataCommand::handleResponse(const fragment_t fragment[], const uint8_t max_fragment_id)
 {
     // Check CRC of whole payload
-    if (!MultiDataCommand::handleResponse(inverter, fragment, max_fragment_id)) {
+    if (!MultiDataCommand::handleResponse(fragment, max_fragment_id)) {
         return false;
     }
 
@@ -46,9 +49,9 @@ bool RealTimeRunDataCommand::handleResponse(InverterAbstract& inverter, const fr
     // In case of low power in the inverter it occours that some incomplete fragments
     // with a valid CRC are received.
     const uint8_t fragmentsSize = getTotalFragmentSize(fragment, max_fragment_id);
-    const uint8_t expectedSize = inverter.Statistics()->getExpectedByteCount();
+    const uint8_t expectedSize = _inv->Statistics()->getExpectedByteCount();
     if (fragmentsSize < expectedSize) {
-        Hoymiles.getMessageOutput()->printf("ERROR in %s: Received fragment size: %d, min expected size: %d\r\n",
+        ESP_LOGE(TAG, "ERROR in %s: Received fragment size: %" PRIu8 ", min expected size: %" PRIu8 "",
             getCommandName().c_str(), fragmentsSize, expectedSize);
 
         return false;
@@ -56,19 +59,19 @@ bool RealTimeRunDataCommand::handleResponse(InverterAbstract& inverter, const fr
 
     // Move all fragments into target buffer
     uint8_t offs = 0;
-    inverter.Statistics()->beginAppendFragment();
-    inverter.Statistics()->clearBuffer();
+    _inv->Statistics()->beginAppendFragment();
+    _inv->Statistics()->clearBuffer();
     for (uint8_t i = 0; i < max_fragment_id; i++) {
-        inverter.Statistics()->appendFragment(offs, fragment[i].fragment, fragment[i].len);
+        _inv->Statistics()->appendFragment(offs, fragment[i].fragment, fragment[i].len);
         offs += (fragment[i].len);
     }
-    inverter.Statistics()->endAppendFragment();
-    inverter.Statistics()->resetRxFailureCount();
-    inverter.Statistics()->setLastUpdate(millis());
+    _inv->Statistics()->endAppendFragment();
+    _inv->Statistics()->resetRxFailureCount();
+    _inv->Statistics()->setLastUpdate(millis());
     return true;
 }
 
-void RealTimeRunDataCommand::gotTimeout(InverterAbstract& inverter)
+void RealTimeRunDataCommand::gotTimeout()
 {
-    inverter.Statistics()->incrementRxFailureCount();
+    _inv->Statistics()->incrementRxFailureCount();
 }

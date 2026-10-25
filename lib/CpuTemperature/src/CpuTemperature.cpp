@@ -1,0 +1,94 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/*
+ * Copyright (C) 2024-2026 Thomas Basler and others
+ */
+
+#include "CpuTemperature.h"
+#include <Arduino.h>
+
+#undef TAG
+static const char* TAG = "temperature";
+
+#if defined(CONFIG_IDF_TARGET_ESP32)
+// there is no official API available on the original ESP32
+extern "C" {
+uint8_t temprature_sens_read();
+}
+#elif defined(CONFIG_IDF_TARGET_ESP32C3) || defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3)
+#if (ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(5, 0, 0))
+#include "driver/temp_sensor.h"
+#else
+#include <driver/temperature_sensor.h>
+#endif
+#endif
+
+CpuTemperatureClass CpuTemperature;
+
+float CpuTemperatureClass::read()
+{
+#if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3)
+    // Disabling temperature reading for ESP32-S2 models as it might lead to WDT resets.
+    // Same issue with ESP32-S3, where such WDT resets have been observed multiple times.
+    // See: https://github.com/espressif/esp-idf/issues/8088
+    return NAN;
+#endif
+
+    std::lock_guard<std::mutex> lock(_mutex);
+
+    float temperature = NAN;
+    bool success = false;
+
+#if (ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)) && !CONFIG_IDF_TARGET_ESP32
+    temperature_sensor_handle_t temp_handle = NULL;
+    temperature_sensor_config_t temp_sensor_config = TEMPERATURE_SENSOR_CONFIG_DEFAULT(-10, 80);
+
+    esp_err_t err = temperature_sensor_install(&temp_sensor_config, &temp_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to install temperature sensor: %s", esp_err_to_name(err));
+        return NAN;
+    }
+
+    err = temperature_sensor_enable(temp_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to enable temperature sensor: %s", esp_err_to_name(err));
+        temperature_sensor_uninstall(temp_handle);
+        return NAN;
+    }
+
+    err = temperature_sensor_get_celsius(temp_handle, &temperature);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to read temperature: %s", esp_err_to_name(err));
+        temperature_sensor_disable(temp_handle);
+        temperature_sensor_uninstall(temp_handle);
+        return NAN;
+    }
+
+    temperature_sensor_disable(temp_handle);
+    temperature_sensor_uninstall(temp_handle);
+    success = true;
+
+#elif defined(CONFIG_IDF_TARGET_ESP32)
+    uint8_t raw = temprature_sens_read();
+    ESP_LOGV(TAG, "Raw temperature value: %" PRIu8, raw);
+    temperature = (raw - 32) / 1.8f;
+    success = (raw != 128);
+#elif defined(CONFIG_IDF_TARGET_ESP32C3) || defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3)
+    temp_sensor_config_t tsens = TSENS_CONFIG_DEFAULT();
+    temp_sensor_set_config(tsens);
+    temp_sensor_start();
+#if defined(CONFIG_IDF_TARGET_ESP32S3) && (ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(4, 4, 3))
+#error \
+    "ESP32-S3 internal temperature sensor requires ESP IDF V4.4.3 or higher. See https://github.com/esphome/issues/issues/4271"
+#endif
+    esp_err_t result = temp_sensor_read_celsius(&temperature);
+    temp_sensor_stop();
+    success = (result == ESP_OK);
+#endif
+
+    if (success && std::isfinite(temperature)) {
+        return temperature;
+    } else {
+        ESP_LOGD(TAG, "Ignoring invalid temperature (success=%s, value=%.1f)", (success ? "true" : "false"), temperature);
+        return NAN;
+    }
+}

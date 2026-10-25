@@ -1,5 +1,5 @@
 export interface DevInfoStatus {
-    serial: number;
+    serial: string;
     valid_data: boolean;
     fw_bootloader_version: number;
     fw_build_version: number;
@@ -8,4 +8,8 @@ export interface DevInfoStatus {
     hw_version: number;
     hw_model_name: string;
     max_power: number;
+    pdl_supported: boolean;
+    rf_valid_data: boolean;
+    rf_hw_version: string;
+    rf_fw_version: string;
 }

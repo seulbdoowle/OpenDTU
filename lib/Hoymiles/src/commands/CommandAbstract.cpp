@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * Copyright (C) 2022-2023 Thomas Basler and others
+ * Copyright (C) 2022-2026 Thomas Basler and others
  */
 
 /*
@@ -27,15 +27,20 @@ Source Address: 80 12 23 04
      Target Addr   Source Addr      CRC8
 */
 #include "CommandAbstract.h"
+#include "../HoymilesUtils.h"
+#include "../inverters/InverterAbstract.h"
 #include "crc.h"
 #include <string.h>
 
-CommandAbstract::CommandAbstract(const uint64_t target_address, const uint64_t router_address)
+CommandAbstract::CommandAbstract(InverterAbstract* inv, const uint64_t router_address)
 {
     memset(_payload, 0, RF_LEN);
     _payload_size = 0;
+    _singleFragmentAnswer = false;
 
-    setTargetAddress(target_address);
+    _inv = inv;
+
+    setTargetAddress(_inv->serial());
     setRouterAddress(router_address);
     setSendCount(0);
     setTimeout(0);
@@ -47,13 +52,10 @@ const uint8_t* CommandAbstract::getDataPayload()
     return _payload;
 }
 
-void CommandAbstract::dumpDataPayload(Print* stream)
+String CommandAbstract::dumpDataPayload()
 {
     const uint8_t* payload = getDataPayload();
-    for (uint8_t i = 0; i < getDataSize(); i++) {
-        stream->printf("%02X ", payload[i]);
-    }
-    stream->println("");
+    return HoymilesUtils::dumpArray(payload, getDataSize());
 }
 
 uint8_t CommandAbstract::getDataSize() const
@@ -122,7 +124,7 @@ void CommandAbstract::convertSerialToPacketId(uint8_t buffer[], const uint64_t s
     buffer[0] = s.b[3];
 }
 
-void CommandAbstract::gotTimeout(InverterAbstract& inverter)
+void CommandAbstract::gotTimeout()
 {
 }
 
@@ -134,4 +136,10 @@ uint8_t CommandAbstract::getMaxResendCount() const
 uint8_t CommandAbstract::getMaxRetransmitCount() const
 {
     return MAX_RETRANSMIT_COUNT;
+}
+
+bool CommandAbstract::areSameParameter(CommandAbstract* other)
+{
+    return this->getCommandName() == other->getCommandName()
+        && this->_targetAddress == other->getTargetAddress();
 }

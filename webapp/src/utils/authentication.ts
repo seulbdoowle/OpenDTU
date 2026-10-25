@@ -1,35 +1,31 @@
-import type { Emitter, EventType } from "mitt";
-import type { Router } from "vue-router";
+import type { Emitter, EventType } from 'mitt';
+import type { Router } from 'vue-router';
+
+function getUserAuthData(): string | null {
+    try {
+        const user = JSON.parse(localStorage.getItem('user') || '');
+        return user?.authdata || null;
+    } catch {
+        return null;
+    }
+}
 
 export function authHeader(): Headers {
     // return authorization header with basic auth credentials
-    let user = null;
-    try {
-        user = JSON.parse(localStorage.getItem('user') || "");
-    } catch {
-        // continue regardless of error
+    const authdata = getUserAuthData();
+    const headers = new Headers({ 'X-Requested-With': 'XMLHttpRequest' });
+    if (authdata) {
+        headers.append('Authorization', 'Basic ' + authdata);
     }
-
-    const headers = new Headers();
-    headers.append('X-Requested-With', 'XMLHttpRequest');
-    if (user && user.authdata) {
-        headers.append('Authorization', 'Basic ' + user.authdata);
-    }
-    return new Headers(headers);
+    return headers;
 }
 
 export function authUrl(): string {
-    let user = null;
-    try {
-        user = JSON.parse(localStorage.getItem('user') || "");
-    } catch {
-        // continue regardless of error
+    const authdata = getUserAuthData();
+    if (authdata) {
+        return encodeURIComponent(atob(authdata)).replace('%3A', ':') + '@';
     }
-
-    if (user && user.authdata) {
-        return encodeURIComponent(atob(user.authdata)).replace("%3A", ":") + '@';
-    }
-    return "";
+    return '';
 }
 
 export function logout() {
@@ -38,21 +34,21 @@ export function logout() {
 }
 
 export function isLoggedIn(): boolean {
-    return (localStorage.getItem('user') != null);
+    return getUserAuthData() != null;
 }
 
-export function login(username: String, password: String) {
+export function login(username: string, password: string) {
     const requestOptions = {
         method: 'GET',
         headers: {
             'X-Requested-With': 'XMLHttpRequest',
-            'Authorization': 'Basic ' + btoa(unescape(encodeURIComponent(username + ':' + password))),
+            Authorization: 'Basic ' + btoa(unescape(encodeURIComponent(username + ':' + password))),
         },
     };
 
     return fetch('/api/security/authenticate', requestOptions)
         .then(handleAuthResponse)
-        .then(retVal => {
+        .then((retVal) => {
             // login successful if there's a user in the response
             if (retVal) {
                 // store user details and basic auth credentials in local storage
@@ -65,18 +61,33 @@ export function login(username: String, password: String) {
         });
 }
 
-export function handleResponse(response: Response, emitter: Emitter<Record<EventType, unknown>>, router: Router) {
-    return response.text().then(text => {
+export function handleResponse(
+    response: Response,
+    emitter: Emitter<Record<EventType, unknown>>,
+    router: Router,
+    ignore_error: boolean = false
+) {
+    return response.text().then((text) => {
         const data = text && JSON.parse(text);
         if (!response.ok) {
             if (response.status === 401) {
                 // auto logout if 401 response returned from api
                 logout();
-                emitter.emit("logged-out");
-                router.push({ path: "/login", query: { returnUrl: router.currentRoute.value.fullPath } });
+                emitter.emit('logged-out');
+                router.push({
+                    path: '/login',
+                    query: { returnUrl: router.currentRoute.value.fullPath },
+                });
+                return Promise.reject();
             }
 
-            const error = { message: (data && data.message) || response.statusText, status: response.status || 0 };
+            const error = {
+                message: (data && data.message) || response.statusText,
+                status: response.status || 0,
+            };
+            if (!ignore_error) {
+                router.push({ name: 'Error', params: error });
+            }
             return Promise.reject(error);
         }
 
@@ -85,7 +96,7 @@ export function handleResponse(response: Response, emitter: Emitter<Record<Event
 }
 
 function handleAuthResponse(response: Response) {
-    return response.text().then(text => {
+    return response.text().then((text) => {
         const data = text && JSON.parse(text);
         if (!response.ok) {
             if (response.status === 401) {
@@ -93,7 +104,7 @@ function handleAuthResponse(response: Response) {
                 logout();
             }
 
-            const error = "Invalid credentials";
+            const error = 'Invalid credentials';
             return Promise.reject(error);
         }
 

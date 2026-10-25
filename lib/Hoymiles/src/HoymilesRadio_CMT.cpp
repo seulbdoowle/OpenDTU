@@ -1,49 +1,84 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * Copyright (C) 2023 Thomas Basler and others
+ * Copyright (C) 2023-2026 Thomas Basler and others
  */
 #include "HoymilesRadio_CMT.h"
 #include "Hoymiles.h"
+#include "HoymilesUtils.h"
 #include "crc.h"
 #include <FunctionalInterrupt.h>
+#include <esp_log.h>
+#include <frozen/map.h>
 
-#define HOY_BOOT_FREQ 868000000 // Hoymiles boot/init frequency after power up inverter or connection lost for 15 min
-#define HOY_BASE_FREQ 860000000
-// offset from initalized CMT base frequency to Hoy base frequency in channels
-#define CMT_BASE_CH_OFFSET860 ((CMT_BASE_FREQ - HOY_BASE_FREQ) / CMT2300A_ONE_STEP_SIZE / FH_OFFSET)
+#undef TAG
+static const char* TAG = "hoymiles";
 
-// frequency can not be lower than actual initailized base freq
-#define MIN_FREQ_KHZ ((HOY_BASE_FREQ + (CMT_BASE_CH_OFFSET860 >= 1 ? CMT_BASE_CH_OFFSET860 : 1) * CMT2300A_ONE_STEP_SIZE * FH_OFFSET) / 1000)
-
-// =923500, 0xFF does not work
-#define MAX_FREQ_KHZ ((HOY_BASE_FREQ + 0xFE * CMT2300A_ONE_STEP_SIZE * FH_OFFSET) / 1000)
-
-float HoymilesRadio_CMT::getFrequencyFromChannel(const uint8_t channel)
+constexpr CountryFrequencyDefinition_t make_value(FrequencyBand_t Band, uint32_t Freq_Legal_Min, uint32_t Freq_Legal_Max, uint32_t Freq_Default, uint32_t Freq_StartUp)
 {
-    return (CMT_BASE_FREQ + (CMT_BASE_CH_OFFSET860 + channel) * FH_OFFSET * CMT2300A_ONE_STEP_SIZE) / 1000000.0;
+    // frequency can not be lower than actual initailized base freq + 250000
+    uint32_t minFrequency = CMT2300A::getBaseFrequency(Band) + HoymilesRadio_CMT::getChannelWidth();
+
+    // =923500, 0xFF does not work
+    uint32_t maxFrequency = CMT2300A::getBaseFrequency(Band) + 0xFE * HoymilesRadio_CMT::getChannelWidth();
+
+    CountryFrequencyDefinition_t v = { Band, minFrequency, maxFrequency, Freq_Legal_Min, Freq_Legal_Max, Freq_Default, Freq_StartUp };
+    return v;
 }
 
-uint8_t HoymilesRadio_CMT::getChannelFromFrequency(const uint32_t freq_kHz)
+constexpr frozen::map<CountryModeId_t, CountryFrequencyDefinition_t, 3> countryDefinition = {
+    { CountryModeId_t::MODE_EU, make_value(FrequencyBand_t::BAND_860, 863e6, 870e6, 865e6, 868e6) },
+    { CountryModeId_t::MODE_US, make_value(FrequencyBand_t::BAND_900, 905e6, 925e6, 918e6, 915e6) },
+    { CountryModeId_t::MODE_BR, make_value(FrequencyBand_t::BAND_900, 915e6, 928e6, 918e6, 915e6) },
+};
+
+uint32_t HoymilesRadio_CMT::getFrequencyFromChannel(const uint8_t channel) const
 {
-    if ((freq_kHz % 250) != 0) {
-        Hoymiles.getMessageOutput()->printf("%.3f MHz is not divisible by 250 kHz!\r\n", freq_kHz / 1000.0);
-        return 0xFF; // ERROR
-    }
-    if (freq_kHz < MIN_FREQ_KHZ || freq_kHz > MAX_FREQ_KHZ) {
-        Hoymiles.getMessageOutput()->printf("%.2f MHz is out of Hoymiles/CMT range! (%.2f MHz - %.2f MHz)\r\n",
-            freq_kHz / 1000.0, MIN_FREQ_KHZ / 1000.0, MAX_FREQ_KHZ / 1000.0);
-        return 0xFF; // ERROR
-    }
-    if (freq_kHz < 863000 || freq_kHz > 870000) {
-        Hoymiles.getMessageOutput()->printf("!!! caution: %.2f MHz is out of EU legal range! (863 - 870 MHz)\r\n",
-            freq_kHz / 1000.0);
-    }
-    return (freq_kHz * 1000 - CMT_BASE_FREQ) / CMT2300A_ONE_STEP_SIZE / FH_OFFSET - CMT_BASE_CH_OFFSET860; // frequency to channel
+    return (_radio->getBaseFrequency() + channel * getChannelWidth());
 }
 
-bool HoymilesRadio_CMT::cmtSwitchDtuFreq(const uint32_t to_freq_kHz)
+uint8_t HoymilesRadio_CMT::getChannelFromFrequency(const uint32_t frequency) const
 {
-    const uint8_t toChannel = getChannelFromFrequency(to_freq_kHz);
+    if ((frequency % getChannelWidth()) != 0) {
+        ESP_LOGE(TAG, "%.3f MHz is not divisible by %" PRIu32 " kHz!", frequency / 1000000.0, getChannelWidth());
+        return 0xFF; // ERROR
+    }
+    if (frequency < getMinFrequency() || frequency > getMaxFrequency()) {
+        ESP_LOGE(TAG, "%.2f MHz is out of Hoymiles/CMT range! (%.2f MHz - %.2f MHz)",
+            frequency / 1000000.0, getMinFrequency() / 1000000.0, getMaxFrequency() / 1000000.0);
+        return 0xFF; // ERROR
+    }
+    if (frequency < countryDefinition.at(_countryMode).Freq_Legal_Min || frequency > countryDefinition.at(_countryMode).Freq_Legal_Max) {
+        ESP_LOGE(TAG, "!!! caution: %.2f MHz is out of region legal range! (%" PRIu32 " - %" PRIu32 " MHz)",
+            frequency / 1000000.0,
+            static_cast<uint32_t>(countryDefinition.at(_countryMode).Freq_Legal_Min / 1e6),
+            static_cast<uint32_t>(countryDefinition.at(_countryMode).Freq_Legal_Max / 1e6));
+    }
+
+    return (frequency - _radio->getBaseFrequency()) / getChannelWidth(); // frequency to channel
+}
+
+std::vector<CountryFrequencyList_t> HoymilesRadio_CMT::getCountryFrequencyList() const
+{
+    std::vector<CountryFrequencyList_t> v;
+    for (const auto& [key, value] : countryDefinition) {
+        CountryFrequencyList_t s;
+        s.mode = key;
+        s.definition.Band = value.Band;
+        s.definition.Freq_Default = value.Freq_Default;
+        s.definition.Freq_StartUp = value.Freq_StartUp;
+        s.definition.Freq_Min = value.Freq_Min;
+        s.definition.Freq_Max = value.Freq_Max;
+        s.definition.Freq_Legal_Max = value.Freq_Legal_Max;
+        s.definition.Freq_Legal_Min = value.Freq_Legal_Min;
+
+        v.push_back(s);
+    }
+    return v;
+}
+
+bool HoymilesRadio_CMT::cmtSwitchDtuFreq(const uint32_t to_frequency)
+{
+    const uint8_t toChannel = getChannelFromFrequency(to_frequency);
     if (toChannel == 0xFF) {
         return false;
     }
@@ -61,13 +96,14 @@ void HoymilesRadio_CMT::init(const int8_t pin_sdio, const int8_t pin_clk, const 
 
     _radio->begin();
 
+    setCountryMode(CountryModeId_t::MODE_EU);
     cmtSwitchDtuFreq(_inverterTargetFrequency); // start dtu at work freqency, for fast Rx if inverter is already on and frequency switched
 
     if (!_radio->isChipConnected()) {
-        Hoymiles.getMessageOutput()->println("CMT: Connection error!!");
+        ESP_LOGE(TAG, "CMT2300A: Connection error!!");
         return;
     }
-    Hoymiles.getMessageOutput()->println("CMT: Connection successful");
+    ESP_LOGI(TAG, "CMT2300A: Connection successful");
 
     if (pin_gpio2 >= 0) {
         attachInterrupt(digitalPinToInterrupt(pin_gpio2), std::bind(&HoymilesRadio_CMT::handleInt1, this), RISING);
@@ -95,25 +131,23 @@ void HoymilesRadio_CMT::loop()
     }
 
     if (_packetReceived) {
-        Hoymiles.getMessageOutput()->println("Interrupt received");
+        ESP_LOGV(TAG, "Interrupt received");
         while (_radio->available()) {
-            if (!(_rxBuffer.size() > FRAGMENT_BUFFER_SIZE)) {
-                fragment_t f;
-                memset(f.fragment, 0xcc, MAX_RF_PAYLOAD_SIZE);
-                f.len = _radio->getDynamicPayloadSize();
-                f.channel = _radio->getChannel();
-                f.rssi = _radio->getRssiDBm();
-                f.wasReceived = false;
-                f.mainCmd = 0x00;
-                if (f.len > MAX_RF_PAYLOAD_SIZE) {
-                    f.len = MAX_RF_PAYLOAD_SIZE;
-                }
-                _radio->read(f.fragment, f.len);
-                _rxBuffer.push(f);
-            } else {
-                Hoymiles.getMessageOutput()->println("CMT: Buffer full");
+            if (_rxBuffer.size() > FRAGMENT_BUFFER_SIZE) {
+                ESP_LOGE(TAG, "CMT2300A: Buffer full");
                 _radio->flush_rx();
+                continue;
             }
+
+            fragment_t f;
+            memset(f.fragment, 0xcc, MAX_RF_PAYLOAD_SIZE);
+            f.len = std::min<uint8_t>(_radio->getDynamicPayloadSize(), MAX_RF_PAYLOAD_SIZE);
+            f.channel = _radio->getChannel();
+            f.rssi = _radio->getRssiDBm();
+            f.wasReceived = false;
+            f.mainCmd = 0x00;
+            _radio->read(f.fragment, f.len);
+            _rxBuffer.push(f);
         }
         _radio->flush_rx();
         _packetReceived = false;
@@ -121,7 +155,7 @@ void HoymilesRadio_CMT::loop()
     } else {
         // Perform package parsing only if no packages are received
         if (!_rxBuffer.empty()) {
-            fragment_t f = _rxBuffer.back();
+            fragment_t f = _rxBuffer.front();
             if (checkFragmentCrc(f)) {
 
                 const serial_u dtuId = convertSerialToRadioId(_dtuSerial);
@@ -134,18 +168,17 @@ void HoymilesRadio_CMT::loop()
 
                     if (nullptr != inv) {
                         // Save packet in inverter rx buffer
-                        Hoymiles.getMessageOutput()->printf("RX %.2f MHz --> ", getFrequencyFromChannel(f.channel));
-                        dumpBuf(f.fragment, f.len, false);
-                        Hoymiles.getMessageOutput()->printf("| %d dBm\r\n", f.rssi);
+                        ESP_LOGD(TAG, "RX %.2f MHz --> %s | %" PRId8 " dBm",
+                            getFrequencyFromChannel(f.channel) / 1000000.0, HoymilesUtils::dumpArray(f.fragment, f.len).c_str(), f.rssi);
 
-                        inv->addRxFragment(f.fragment, f.len);
+                        inv->addRxFragment(f.fragment, f.len, f.rssi);
                     } else {
-                        Hoymiles.getMessageOutput()->println("Inverter Not found!");
+                        ESP_LOGE(TAG, "Inverter Not found!");
                     }
                 }
 
             } else {
-                Hoymiles.getMessageOutput()->println("Frame kaputt"); // ;-)
+                ESP_LOGW(TAG, "Frame kaputt"); // ;-)
             }
 
             // Remove paket from buffer even it was corrupted
@@ -158,14 +191,15 @@ void HoymilesRadio_CMT::loop()
 
 void HoymilesRadio_CMT::setPALevel(const int8_t paLevel)
 {
+    _paLevel = paLevel;
     if (!_isInitialized) {
         return;
     }
 
     if (_radio->setPALevel(paLevel)) {
-        Hoymiles.getMessageOutput()->printf("CMT TX power set to %d dBm\r\n", paLevel);
+        ESP_LOGI(TAG, "CMT TX power set to %" PRId8 " dBm", paLevel);
     } else {
-        Hoymiles.getMessageOutput()->printf("CMT TX power %d dBm is not defined! (min: -10 dBm, max: 20 dBm)\r\n", paLevel);
+        ESP_LOGE(TAG, "CMT TX power %" PRId8 " dBm is not defined! (min: -10 dBm, max: 20 dBm)", paLevel);
     }
 }
 
@@ -175,7 +209,10 @@ void HoymilesRadio_CMT::setInverterTargetFrequency(const uint32_t frequency)
     if (!_isInitialized) {
         return;
     }
+    // Switch channel while staying in RX — GoStby, change channel, GoRx
+    _radio->stopListening();
     cmtSwitchDtuFreq(_inverterTargetFrequency);
+    _radio->startListening();
 }
 
 uint32_t HoymilesRadio_CMT::getInverterTargetFrequency() const
@@ -191,14 +228,45 @@ bool HoymilesRadio_CMT::isConnected() const
     return _radio->isChipConnected();
 }
 
-uint32_t HoymilesRadio_CMT::getMinFrequency()
+uint32_t HoymilesRadio_CMT::getMinFrequency() const
 {
-    return MIN_FREQ_KHZ;
+    return countryDefinition.at(_countryMode).Freq_Min;
 }
 
-uint32_t HoymilesRadio_CMT::getMaxFrequency()
+uint32_t HoymilesRadio_CMT::getMaxFrequency() const
 {
-    return MAX_FREQ_KHZ;
+    return countryDefinition.at(_countryMode).Freq_Max;
+}
+
+CountryModeId_t HoymilesRadio_CMT::getCountryMode() const
+{
+    return _countryMode;
+}
+
+void HoymilesRadio_CMT::setCountryMode(const CountryModeId_t mode)
+{
+    _countryMode = mode;
+    if (!_isInitialized) {
+        return;
+    }
+
+    // setFrequencyBand() re-initializes the chip and thereby resets the
+    // channel, the PA level and the RX state to the register bank defaults.
+    // Restore them afterwards, otherwise the radio stays asleep on the band
+    // base frequency with default TX power until the next config change.
+    _radio->setFrequencyBand(countryDefinition.at(mode).Band);
+
+    if (_inverterTargetFrequency >= getMinFrequency() && _inverterTargetFrequency <= getMaxFrequency()) {
+        cmtSwitchDtuFreq(_inverterTargetFrequency);
+    }
+    _radio->setPALevel(_paLevel);
+    _radio->startListening();
+}
+
+uint32_t HoymilesRadio_CMT::getInvBootFrequency() const
+{
+    // Hoymiles boot/init frequency after power up inverter or connection lost for 15 min
+    return countryDefinition.at(_countryMode).Freq_StartUp;
 }
 
 void ARDUINO_ISR_ATTR HoymilesRadio_CMT::handleInt1()
@@ -220,15 +288,14 @@ void HoymilesRadio_CMT::sendEsbPacket(CommandAbstract& cmd)
     _radio->stopListening();
 
     if (cmd.getDataPayload()[0] == 0x56) { // @todo(tbnobody) Bad hack to identify ChannelChange Command
-        cmtSwitchDtuFreq(HOY_BOOT_FREQ / 1000);
+        cmtSwitchDtuFreq(getInvBootFrequency());
     }
 
-    Hoymiles.getMessageOutput()->printf("TX %s %.2f MHz --> ",
-        cmd.getCommandName().c_str(), getFrequencyFromChannel(_radio->getChannel()));
-    cmd.dumpDataPayload(Hoymiles.getMessageOutput());
+    ESP_LOGD(TAG, "TX %s %.2f MHz --> %s",
+        cmd.getCommandName().c_str(), getFrequencyFromChannel(_radio->getChannel()) / 1000000.0, cmd.dumpDataPayload().c_str());
 
     if (!_radio->write(cmd.getDataPayload(), cmd.getDataSize())) {
-        Hoymiles.getMessageOutput()->println("TX SPI Timeout");
+        ESP_LOGE(TAG, "TX SPI Timeout");
     }
     cmtSwitchDtuFreq(_inverterTargetFrequency);
     _radio->startListening();
